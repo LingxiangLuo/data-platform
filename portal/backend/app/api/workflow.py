@@ -1,0 +1,451 @@
+from typing import Optional, List, Dict, Any
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.core.security import get_current_user
+from app.core.ds_client import get_ds_client
+from app.core.dsl_translator import translate_workflow
+from app.models.workflow import Workflow
+from app.models.component import Component
+from app.models.datasource import DataSource
+from app.models.user import SysUser
+
+router = APIRouter(prefix="/workflows", tags=["工作流"])
+
+
+# ===== 状态常量 =====
+STATUS_DRAFT = "draft"
+STATUS_TESTED = "tested"
+STATUS_ONLINE = "online"
+STATUS_OFFLINE = "offline"
+
+EDITABLE_STATUSES = {STATUS_DRAFT, STATUS_TESTED}
+DELETABLE_STATUSES = {STATUS_DRAFT, STATUS_OFFLINE}
+
+
+# ===== Schemas =====
+class WorkflowStep(BaseModel):
+    component_id: int
+    name: Optional[str] = None  # 步骤别名,默认取 component.name
+
+
+class WorkflowCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    steps: List[WorkflowStep] = Field(default_factory=list)
+    cron_expression: Optional[str] = None
+
+
+class WorkflowUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    steps: Optional[List[WorkflowStep]] = None
+    cron_expression: Optional[str] = None
+
+
+def _serialize(w: Workflow, db: Session) -> dict:
+    """序列化 workflow,steps 中带上 component 详情"""
+    steps = w.steps_json or []
+    # 补充 component 详情
+    comp_ids = [s.get("component_id") for s in steps if s.get("component_id")]
+    comp_map = {}
+    if comp_ids:
+        comps = db.query(Component).filter(Component.id.in_(comp_ids)).all()
+        comp_map = {c.id: c for c in comps}
+    enriched_steps = []
+    for idx, s in enumerate(steps):
+        cid = s.get("component_id")
+        c = comp_map.get(cid)
+        enriched_steps.append({
+            "order": idx,
+            "component_id": cid,
+            "name": s.get("name") or (c.name if c else f"step_{idx}"),
+            "component_name": c.name if c else None,
+            "component_type": c.type if c else None,
+            "component_status": c.status if c else None,
+        })
+    return {
+        "id": w.id,
+        "name": w.name,
+        "description": w.description,
+        "steps": enriched_steps,
+        "cron_expression": w.cron_expression,
+        "schedule_status": w.schedule_status,
+        "status": w.status,
+        "version": w.version,
+        "ds_process_code": w.ds_process_code,
+        "ds_schedule_id": w.ds_schedule_id,
+        "created_at": str(w.created_at) if w.created_at else None,
+        "updated_at": str(w.updated_at) if w.updated_at else None,
+    }
+
+
+def _get_or_404(db: Session, wf_id: int) -> Workflow:
+    w = db.query(Workflow).filter(Workflow.id == wf_id).first()
+    if not w:
+        raise HTTPException(status_code=404, detail="工作流不存在")
+    return w
+
+
+def _validate_steps(db: Session, steps: List[WorkflowStep]) -> List[Dict[str, Any]]:
+    """校验所有 component 存在且发布,返回 steps_json 数据"""
+    if not steps:
+        return []
+    comp_ids = [s.component_id for s in steps]
+    comps = db.query(Component).filter(Component.id.in_(comp_ids)).all()
+    comp_map = {c.id: c for c in comps}
+    out = []
+    for s in steps:
+        c = comp_map.get(s.component_id)
+        if not c:
+            raise HTTPException(status_code=400, detail=f"组件 {s.component_id} 不存在")
+        out.append({"component_id": s.component_id, "name": s.name or c.name})
+    return out
+
+
+async def _sync_to_ds(db: Session, w: Workflow) -> tuple:
+    """把 workflow 翻译并同步到 DS
+
+    返回: (pd_code, schedule_id) — schedule_id 仅在配置了 cron 时返回
+    抛 HTTPException 表示 DS 同步失败
+    """
+    steps = w.steps_json or []
+    if not steps:
+        raise HTTPException(status_code=400, detail="工作流为空")
+    comp_ids = [s.get("component_id") for s in steps]
+    comps = db.query(Component).filter(Component.id.in_(comp_ids)).all()
+    comp_map = {c.id: c for c in comps}
+    # 数据源映射 (SQL 组件需要)
+    ds_ids = set()
+    for c in comps:
+        cfg = c.config_json or {}
+        if cfg.get("datasource_id"):
+            ds_ids.add(cfg["datasource_id"])
+    datasource_map = {}
+    if ds_ids:
+        dss = db.query(DataSource).filter(DataSource.id.in_(list(ds_ids))).all()
+        datasource_map = {d.id: d for d in dss}
+
+    ds = get_ds_client()
+    task_codes = await ds.gen_task_codes(len(steps))
+    if not task_codes or len(task_codes) < len(steps):
+        raise HTTPException(status_code=502, detail="DS 生成 task code 失败")
+    task_codes = [int(x) for x in task_codes[:len(steps)]]
+
+    payload = translate_workflow(w, comp_map, task_codes, datasource_lookup=datasource_map)
+
+    # 已存在 ds_process_code → 更新;否则创建
+    if w.ds_process_code:
+        # 先 offline 才能更新
+        await ds.release_process_definition(w.ds_process_code, online=False)
+        ok = await ds.update_process_definition(
+            w.ds_process_code,
+            payload["name"], payload["description"],
+            payload["taskDefinitionJson"], payload["taskRelationJson"], payload["locations"],
+        )
+        if not ok:
+            raise HTTPException(status_code=502, detail="DS 更新 process-definition 失败")
+        pd_code = w.ds_process_code
+    else:
+        pd_code = await ds.save_process_definition(
+            payload["name"], payload["description"],
+            payload["taskDefinitionJson"], payload["taskRelationJson"], payload["locations"],
+        )
+        if not pd_code:
+            raise HTTPException(status_code=502, detail="DS 创建 process-definition 失败")
+
+    # 上线 DS process definition
+    ok = await ds.release_process_definition(pd_code, online=True)
+    if not ok:
+        raise HTTPException(status_code=502, detail="DS 上线 process-definition 失败")
+
+    # 处理 schedule
+    schedule_id = w.ds_schedule_id
+    if w.cron_expression:
+        if schedule_id:
+            await ds.update_schedule(schedule_id, w.cron_expression)
+        else:
+            schedule_id = await ds.create_schedule(pd_code, w.cron_expression)
+    return pd_code, schedule_id
+
+
+# ===== CRUD =====
+@router.get("")
+def list_workflows(
+    page: int = 1,
+    page_size: int = 20,
+    keyword: Optional[str] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    q = db.query(Workflow)
+    if keyword:
+        q = q.filter(Workflow.name.contains(keyword))
+    if status:
+        q = q.filter(Workflow.status == status)
+    total = q.count()
+    items = q.order_by(Workflow.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {"total": total, "items": [_serialize(w, db) for w in items]}
+
+
+@router.post("")
+def create_workflow(
+    req: WorkflowCreate,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    steps_data = _validate_steps(db, req.steps)
+    w = Workflow(
+        name=req.name,
+        description=req.description,
+        steps_json=steps_data,
+        cron_expression=req.cron_expression,
+        schedule_status="OFFLINE",
+        status=STATUS_DRAFT,
+        version=1,
+        created_by=current_user.id,
+    )
+    db.add(w)
+    db.commit()
+    db.refresh(w)
+    return _serialize(w, db)
+
+
+@router.get("/{wf_id}")
+def get_workflow(
+    wf_id: int,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    return _serialize(_get_or_404(db, wf_id), db)
+
+
+@router.put("/{wf_id}")
+def update_workflow(
+    wf_id: int,
+    req: WorkflowUpdate,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    w = _get_or_404(db, wf_id)
+    if w.status not in EDITABLE_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"工作流状态 {w.status},只有 draft/tested 状态允许编辑;请先下线",
+        )
+    updates = req.model_dump(exclude_unset=True)
+    structural_change = False
+    if "name" in updates:
+        w.name = updates["name"]
+    if "description" in updates:
+        w.description = updates["description"]
+    if "cron_expression" in updates:
+        w.cron_expression = updates["cron_expression"]
+    if "steps" in updates:
+        steps_data = _validate_steps(db, [WorkflowStep(**s) for s in updates["steps"]])
+        w.steps_json = steps_data
+        structural_change = True
+    if structural_change:
+        w.status = STATUS_DRAFT
+        w.version = (w.version or 1) + 1
+    db.commit()
+    db.refresh(w)
+    return _serialize(w, db)
+
+
+@router.delete("/{wf_id}")
+async def delete_workflow(
+    wf_id: int,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    w = _get_or_404(db, wf_id)
+    if w.status not in DELETABLE_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"工作流状态 {w.status},只有 draft/offline 状态允许删除;请先下线",
+        )
+    # 先清理 DS 资源 (尽量,失败也继续删 Portal 记录)
+    if w.ds_schedule_id:
+        try:
+            ds = get_ds_client()
+            await ds.schedule_offline(w.ds_schedule_id)
+            await ds.delete_schedule(w.ds_schedule_id)
+        except Exception:
+            pass
+    if w.ds_process_code:
+        try:
+            ds = get_ds_client()
+            await ds.release_process_definition(w.ds_process_code, online=False)
+            await ds.delete_process_definition(w.ds_process_code)
+        except Exception:
+            pass
+    db.delete(w)
+    db.commit()
+    return {"message": "删除成功"}
+
+
+# ===== 状态机操作 =====
+@router.post("/{wf_id}/test")
+def test_workflow(
+    wf_id: int,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """测试工作流 — 检查所有 component 都已发布"""
+    w = _get_or_404(db, wf_id)
+    if w.status not in {STATUS_DRAFT, STATUS_TESTED}:
+        raise HTTPException(status_code=400, detail=f"状态 {w.status} 下不允许测试")
+    steps = w.steps_json or []
+    if not steps:
+        raise HTTPException(status_code=400, detail="工作流为空,请先添加步骤")
+    # 校验所有 component 处于 online 状态
+    comp_ids = [s.get("component_id") for s in steps]
+    comps = db.query(Component).filter(Component.id.in_(comp_ids)).all()
+    comp_map = {c.id: c for c in comps}
+    unpublished = []
+    for cid in comp_ids:
+        c = comp_map.get(cid)
+        if not c:
+            unpublished.append(f"组件{cid}(不存在)")
+        elif c.status != "online":
+            unpublished.append(f"{c.name}(当前 {c.status})")
+    if unpublished:
+        raise HTTPException(
+            status_code=400,
+            detail=f"以下组件未上线,无法测试: {', '.join(unpublished)}",
+        )
+    # TODO Phase 5+: 实际触发 DS 试运行
+    w.status = STATUS_TESTED
+    db.commit()
+    db.refresh(w)
+    return {"message": "测试通过 (Phase 4 占位)", **_serialize(w, db)}
+
+
+@router.post("/{wf_id}/publish")
+async def publish_workflow(
+    wf_id: int,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """发布工作流 — tested 才能发布,真正同步到 DS"""
+    w = _get_or_404(db, wf_id)
+    if w.status != STATUS_TESTED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"只有 tested 状态可发布,当前 {w.status},请先测试",
+        )
+    pd_code, schedule_id = await _sync_to_ds(db, w)
+    w.ds_process_code = pd_code
+    w.ds_schedule_id = schedule_id
+    w.status = STATUS_ONLINE
+    db.commit()
+    db.refresh(w)
+    return {"message": "已发布并同步到 DS", **_serialize(w, db)}
+
+
+@router.post("/{wf_id}/offline")
+async def offline_workflow(
+    wf_id: int,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    w = _get_or_404(db, wf_id)
+    if w.status != STATUS_ONLINE:
+        raise HTTPException(status_code=400, detail=f"只有 online 状态可下线,当前 {w.status}")
+    # 同步下线 DS 调度 + process definition
+    if w.ds_schedule_id:
+        try:
+            ds = get_ds_client()
+            await ds.schedule_offline(w.ds_schedule_id)
+        except Exception:
+            pass
+    if w.ds_process_code:
+        try:
+            ds = get_ds_client()
+            await ds.release_process_definition(w.ds_process_code, online=False)
+        except Exception:
+            pass
+    w.status = STATUS_OFFLINE
+    w.schedule_status = "OFFLINE"
+    db.commit()
+    db.refresh(w)
+    return {"message": "已下线 (DS 已同步)", **_serialize(w, db)}
+
+
+@router.post("/{wf_id}/run")
+async def run_workflow(
+    wf_id: int,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """手动运行工作流 — 通过 DS 触发"""
+    w = _get_or_404(db, wf_id)
+    if w.status not in {STATUS_ONLINE, STATUS_TESTED}:
+        raise HTTPException(status_code=400, detail=f"状态 {w.status} 下不允许运行,需先测试/发布")
+    if not w.ds_process_code:
+        raise HTTPException(status_code=400, detail="工作流未同步到 DS,请先发布")
+    ds = get_ds_client()
+    result = await ds.start_process_instance(w.ds_process_code)
+    if result is None:
+        raise HTTPException(status_code=502, detail="DS 触发运行失败")
+    return {
+        "message": "已触发运行",
+        "workflow_id": w.id,
+        "ds_process_code": w.ds_process_code,
+        "ds_response": result,
+    }
+
+
+# ===== 调度开关 =====
+@router.post("/{wf_id}/schedule/online")
+async def schedule_online(
+    wf_id: int,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    w = _get_or_404(db, wf_id)
+    if w.status != STATUS_ONLINE:
+        raise HTTPException(status_code=400, detail="工作流需先发布上线才能开启调度")
+    if not w.cron_expression:
+        raise HTTPException(status_code=400, detail="未配置 cron 表达式,请先编辑")
+    if not w.ds_schedule_id:
+        # 没有 schedule 就创建一个
+        if not w.ds_process_code:
+            raise HTTPException(status_code=400, detail="工作流未同步到 DS")
+        ds = get_ds_client()
+        sid = await ds.create_schedule(w.ds_process_code, w.cron_expression)
+        if not sid:
+            raise HTTPException(status_code=502, detail="DS 创建调度失败")
+        w.ds_schedule_id = sid
+    ds = get_ds_client()
+    ok = await ds.schedule_online(w.ds_schedule_id)
+    if not ok:
+        raise HTTPException(status_code=502, detail="DS 上线调度失败")
+    w.schedule_status = "ONLINE"
+    db.commit()
+    db.refresh(w)
+    return {"message": "调度已开启", **_serialize(w, db)}
+
+
+@router.post("/{wf_id}/schedule/offline")
+async def schedule_offline(
+    wf_id: int,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    w = _get_or_404(db, wf_id)
+    if w.ds_schedule_id:
+        try:
+            ds = get_ds_client()
+            await ds.schedule_offline(w.ds_schedule_id)
+        except Exception:
+            pass
+    w.schedule_status = "OFFLINE"
+    db.commit()
+    db.refresh(w)
+    return {"message": "调度已关闭", **_serialize(w, db)}

@@ -1,0 +1,803 @@
+<template>
+  <div class="ide-wrap">
+    <!-- 左侧文件夹树 -->
+    <div class="ide-sidebar">
+      <div class="sidebar-header">
+        <span class="sidebar-title">代码开发</span>
+      </div>
+      <div class="sidebar-search">
+        <a-input v-model="searchKw" size="small" placeholder="搜索" allow-clear>
+          <template #prefix><icon-search /></template>
+        </a-input>
+      </div>
+      <div class="comp-tree">
+        <template v-for="grp in typeGroups" :key="grp.type">
+          <!-- 类型组标题 -->
+          <div class="grp-header" @click="toggleGrp(grp.type)">
+            <icon-down v-if="!grpCollapsed[grp.type]" class="caret" />
+            <icon-right v-else class="caret" />
+            <span class="grp-label">{{ grp.label }}</span>
+            <span class="grp-count">{{ compCountByType(grp.type) }}</span>
+            <a-tooltip content="新建文件夹">
+              <span class="grp-action" @click.stop="startNewFolder(grp.type, null)">
+                <icon-folder-add />
+              </span>
+            </a-tooltip>
+            <a-tooltip content="新建组件">
+              <span class="grp-action" @click.stop="newBlankTab(grp.type as Language)">
+                <icon-file-add />
+              </span>
+            </a-tooltip>
+          </div>
+
+          <!-- 展开后的树节点 -->
+          <template v-if="!grpCollapsed[grp.type]">
+            <template v-for="node in flatTree(grp.type)" :key="node.nodeKey">
+              <!-- 文件夹行 -->
+              <div
+                v-if="node.kind === 'folder'"
+                class="tree-node folder-node"
+                :style="{ paddingLeft: `${14 + node.depth * 16}px` }"
+              >
+                <span class="node-toggle" @click="toggleFolder(node.id)">
+                  <icon-down v-if="!folderCollapsed[node.id]" class="caret" />
+                  <icon-right v-else class="caret" />
+                </span>
+                <icon-folder class="folder-icon" />
+                <span v-if="renamingFolderId !== node.id" class="node-name" @dblclick="startRename(node)">
+                  {{ node.name }}
+                </span>
+                <a-input
+                  v-else
+                  v-model="renameValue"
+                  size="mini"
+                  class="rename-input"
+                  @blur="submitRename(node.id)"
+                  @keyup.enter="submitRename(node.id)"
+                  @keyup.escape="renamingFolderId = null"
+                  ref="renameInputRef"
+                />
+                <span class="node-actions">
+                  <a-tooltip v-if="node.depth < 2" content="新建子文件夹">
+                    <span class="node-action" @click.stop="startNewFolder(node.folderType, node.id)"><icon-folder-add /></span>
+                  </a-tooltip>
+                  <a-tooltip content="新建组件">
+                    <span class="node-action" @click.stop="newBlankTab(node.folderType as Language, node.id)"><icon-file-add /></span>
+                  </a-tooltip>
+                  <a-tooltip content="删除文件夹">
+                    <span class="node-action danger" @click.stop="deleteFolder(node.id)"><icon-delete /></span>
+                  </a-tooltip>
+                </span>
+              </div>
+
+              <!-- 组件行 -->
+              <div
+                v-else
+                :class="['tree-node comp-node', { 'comp-open': isTabOpen(node.id) }]"
+                :style="{ paddingLeft: `${14 + node.depth * 16}px` }"
+                @click="openComp(node.data)"
+              >
+                <span :class="['lang-badge', `badge-${node.data.type}`]">
+                  {{ node.data.type.slice(0, 2).toUpperCase() }}
+                </span>
+                <span class="node-name">{{ node.name }}</span>
+                <span :class="['status-dot', `s-${node.data.status}`]"></span>
+              </div>
+            </template>
+          </template>
+        </template>
+      </div>
+    </div>
+
+    <!-- 右侧编辑区 -->
+    <div class="ide-main">
+      <div v-if="tabs.length === 0" class="ide-empty">
+        <div class="empty-hint">从左侧选择组件，或新建</div>
+        <a-button type="outline" size="small" @click="newBlankTab('sql')">
+          <template #icon><icon-plus /></template>
+          新建 SQL
+        </a-button>
+      </div>
+
+      <template v-else>
+        <!-- 标签栏 -->
+        <div class="tab-bar">
+          <div class="tabs-scroll">
+            <div
+              v-for="tab in tabs"
+              :key="tab.key"
+              :class="['tab-item', { active: activeKey === tab.key }]"
+              @click="switchTab(tab.key)"
+            >
+              <span :class="['lang-badge-sm', `badge-${tab.language}`]">
+                {{ tab.language.slice(0, 2).toUpperCase() }}
+              </span>
+              <span class="tab-name">{{ tab.dirty ? '● ' : '' }}{{ tab.name }}</span>
+              <span class="tab-close" @click.stop="closeTab(tab.key)">×</span>
+            </div>
+          </div>
+          <a-dropdown trigger="click">
+            <a-button type="text" size="mini" class="add-tab-btn"><icon-plus /></a-button>
+            <template #content>
+              <a-doption @click="newBlankTab('sql')">新建 SQL</a-doption>
+              <a-doption @click="newBlankTab('python')">新建 Python</a-doption>
+              <a-doption @click="newBlankTab('shell')">新建 Shell</a-doption>
+            </template>
+          </a-dropdown>
+        </div>
+
+        <!-- 工具栏 -->
+        <div class="ide-toolbar" v-if="activeTab">
+          <a-select
+            v-if="activeTab.language === 'sql'"
+            v-model="activeTab.datasourceId"
+            size="small"
+            placeholder="选择数据源"
+            style="width: 200px"
+          >
+            <a-option v-for="ds in datasources" :key="ds.id" :value="ds.id">{{ ds.name }}</a-option>
+          </a-select>
+          <div style="flex:1" />
+          <a-space size="small">
+            <a-button size="small" type="primary" :loading="running" @click="runCode">
+              <template #icon><icon-play-arrow /></template>
+              运行
+            </a-button>
+            <a-button size="small" :loading="saving" @click="saveTab">
+              <template #icon><icon-save /></template>
+              保存
+            </a-button>
+            <a-button v-if="activeTab.componentId" size="small" @click="quickPublish">
+              <template #icon><icon-upload /></template>
+              发布
+            </a-button>
+          </a-space>
+        </div>
+
+        <!-- 编辑器 -->
+        <div class="editor-area">
+          <CodeEditor
+            :key="activeKey"
+            :model-value="activeTab ? activeTab.code : ''"
+            :language="activeTab ? activeTab.language : 'sql'"
+            :datasource-id="activeTab?.datasourceId"
+            ref="editorRef"
+            height="100%"
+            @update:model-value="onCodeChange"
+          />
+        </div>
+
+        <!-- 结果面板 -->
+        <div v-if="result !== null || running" class="result-panel">
+          <div class="result-header">
+            <span class="result-info">
+              <template v-if="running">运行中...</template>
+              <template v-else-if="result">
+                <span v-if="result.type === 'table'" class="ok-text">✓ {{ result.row_count }} 行 · {{ result.duration_ms }}ms</span>
+                <span v-else-if="result.type === 'rowcount'" class="ok-text">✓ 影响 {{ result.affected }} 行 · {{ result.duration_ms }}ms</span>
+                <span v-else-if="result.type === 'log'" :class="result.ok ? 'ok-text' : 'err-text'">
+                  {{ result.ok ? '✓' : '✗' }} exit {{ result.exit_code }} · {{ result.duration_ms }}ms
+                </span>
+                <span v-else-if="result.error" class="err-text">✗ {{ result.error }}</span>
+              </template>
+            </span>
+            <a-button type="text" size="mini" @click="result = null">关闭</a-button>
+          </div>
+          <div class="result-body">
+            <div v-if="running" class="result-spin"><a-spin /></div>
+            <template v-else-if="result">
+              <a-table
+                v-if="result.type === 'table'"
+                :columns="result.columns.map((c: string) => ({ title: c, dataIndex: c, ellipsis: true, width: 120 }))"
+                :data="result.rows"
+                :pagination="false"
+                size="mini"
+                :scroll="{ x: 'max-content', y: 200 }"
+                class="result-table"
+              />
+              <div v-else-if="result.type === 'rowcount'" class="result-text ok-text">
+                执行成功，影响 {{ result.affected }} 行
+              </div>
+              <pre v-else-if="result.type === 'log'" :class="['result-log', result.ok ? 'log-ok' : 'log-err']">{{ result.log }}</pre>
+              <div v-else-if="result.error" class="result-text err-text">{{ result.error }}</div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 首次保存弹窗 -->
+    <a-modal v-model:visible="saveModalVisible" title="保存组件" @ok="confirmSave" :ok-loading="saving" width="380px">
+      <a-form-item label="组件名称">
+        <a-input v-model="saveName" placeholder="如：dim_user_query" allow-clear />
+      </a-form-item>
+    </a-modal>
+
+    <!-- 新建文件夹弹窗 -->
+    <a-modal v-model:visible="newFolderVisible" title="新建文件夹" @ok="confirmNewFolder" width="360px">
+      <a-form-item label="文件夹名称">
+        <a-input v-model="newFolderName" placeholder="如：核心指标" allow-clear />
+      </a-form-item>
+    </a-modal>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, reactive, computed, onMounted, nextTick } from 'vue'
+import { Message } from '@arco-design/web-vue'
+import {
+  IconPlus, IconSearch, IconDown, IconRight, IconPlayArrow, IconSave, IconUpload,
+  IconFolder, IconDelete, IconFolderAdd, IconFile,
+} from '@arco-design/web-vue/es/icon'
+import CodeEditor from '../components/CodeEditor.vue'
+import {
+  getComponents, createComponent, updateComponent,
+  getDatasources, runSqlAdhoc, runComponentScript, quickPublishComponent,
+  getComponentFolders, createComponentFolder, renameComponentFolder, deleteComponentFolder,
+} from '../api'
+
+type Language = 'sql' | 'python' | 'shell'
+
+interface Tab {
+  key: string
+  name: string
+  code: string
+  language: Language
+  componentId?: number
+  folderId?: number | null
+  datasourceId?: number
+  dirty: boolean
+}
+
+const typeGroups = [
+  { type: 'sql', label: 'SQL 查询' },
+  { type: 'python', label: 'Python 脚本' },
+  { type: 'shell', label: 'Shell 脚本' },
+]
+
+const tabs = ref<Tab[]>([])
+const activeKey = ref('')
+const activeTab = computed<Tab | null>(() => tabs.value.find(t => t.key === activeKey.value) ?? null)
+
+const components = ref<any[]>([])
+const datasources = ref<any[]>([])
+const folders = ref<any[]>([])  // flat list from API
+const searchKw = ref('')
+
+const grpCollapsed = reactive<Record<string, boolean>>({ sql: false, python: false, shell: false })
+const folderCollapsed = reactive<Record<number, boolean>>({})
+
+const editorRef = ref<any>(null)
+const running = ref(false)
+const saving = ref(false)
+const result = ref<any>(null)
+
+const saveModalVisible = ref(false)
+const saveName = ref('')
+const pendingSaveTab = ref<Tab | null>(null)
+
+const newFolderVisible = ref(false)
+const newFolderName = ref('')
+const newFolderContext = ref<{ type: string; parentId: number | null } | null>(null)
+
+const renamingFolderId = ref<number | null>(null)
+const renameValue = ref('')
+const renameInputRef = ref<any>(null)
+
+let tabSeq = 0
+function genKey() { return `tab-${++tabSeq}` }
+
+function compCountByType(type: string) {
+  return components.value.filter(c => c.type === type).length
+}
+
+// ---- 树结构 ----
+interface TreeNode {
+  nodeKey: string
+  kind: 'folder' | 'component'
+  id: number
+  name: string
+  depth: number
+  folderType: string
+  data?: any
+}
+
+function flatTree(type: string): TreeNode[] {
+  const kw = searchKw.value.toLowerCase()
+  const typeFolders = folders.value.filter(f => f.type === type)
+  const typeComps = components.value.filter(c => {
+    if (c.type !== type) return false
+    if (kw && !c.name.toLowerCase().includes(kw)) return false
+    return true
+  })
+
+  const result: TreeNode[] = []
+
+  function traverse(parentId: number | null, depth: number) {
+    // Child folders
+    const childFolders = typeFolders.filter(f => (f.parent_id ?? null) === parentId)
+    for (const f of childFolders) {
+      result.push({ nodeKey: `f-${f.id}`, kind: 'folder', id: f.id, name: f.name, depth, folderType: type })
+      if (!folderCollapsed[f.id]) {
+        traverse(f.id, depth + 1)
+      }
+    }
+    // Child components
+    const childComps = typeComps.filter(c => (c.folder_id ?? null) === parentId)
+    for (const c of childComps) {
+      result.push({ nodeKey: `c-${c.id}`, kind: 'component', id: c.id, name: c.name, depth, folderType: type, data: c })
+    }
+  }
+
+  traverse(null, 0)
+  return result
+}
+
+function toggleGrp(type: string) { grpCollapsed[type] = !grpCollapsed[type] }
+function toggleFolder(id: number) { folderCollapsed[id] = !folderCollapsed[id] }
+
+function isTabOpen(compId: number) {
+  return tabs.value.some(t => t.componentId === compId)
+}
+
+function openComp(c: any) {
+  const existing = tabs.value.find(t => t.componentId === c.id)
+  if (existing) { switchTab(existing.key); return }
+  const key = genKey()
+  // code is stored in config_json.sql or config_json.script
+  const cfg = c.config_json || {}
+  const code = cfg.sql || cfg.script || c.code || ''
+  tabs.value.push({
+    key,
+    name: c.name,
+    code,
+    language: c.type as Language,
+    componentId: c.id,
+    folderId: c.folder_id ?? null,
+    datasourceId: cfg.datasource_id || c.datasource_id || undefined,
+    dirty: false,
+  })
+  switchTab(key)
+}
+
+function newBlankTab(lang: Language = 'sql', folderId?: number | null) {
+  const key = genKey()
+  const names: Record<Language, string> = { sql: 'Untitled SQL', python: 'Untitled Python', shell: 'Untitled Shell' }
+  tabs.value.push({ key, name: names[lang], code: '', language: lang, folderId: folderId ?? null, dirty: false })
+  switchTab(key)
+}
+
+function switchTab(key: string) { activeKey.value = key; result.value = null }
+
+function closeTab(key: string) {
+  const idx = tabs.value.findIndex(t => t.key === key)
+  if (idx === -1) return
+  tabs.value.splice(idx, 1)
+  if (activeKey.value === key) activeKey.value = tabs.value[Math.max(0, idx - 1)]?.key ?? ''
+  result.value = null
+}
+
+function onCodeChange(v: string) {
+  const tab = activeTab.value
+  if (tab) { tab.code = v; tab.dirty = true }
+}
+
+// ---- 文件夹操作 ----
+function startNewFolder(type: string, parentId: number | null) {
+  newFolderContext.value = { type, parentId }
+  newFolderName.value = ''
+  newFolderVisible.value = true
+}
+
+async function confirmNewFolder() {
+  if (!newFolderName.value.trim()) { Message.warning('请输入文件夹名称'); return }
+  const ctx = newFolderContext.value!
+  try {
+    await createComponentFolder({
+      name: newFolderName.value.trim(),
+      type: ctx.type,
+      parent_id: ctx.parentId,
+    })
+    newFolderVisible.value = false
+    await loadFolders()
+  } catch {}
+}
+
+function startRename(node: TreeNode) {
+  renamingFolderId.value = node.id
+  renameValue.value = node.name
+  nextTick(() => renameInputRef.value?.focus?.())
+}
+
+async function submitRename(id: number) {
+  if (!renameValue.value.trim()) { renamingFolderId.value = null; return }
+  try {
+    await renameComponentFolder(id, renameValue.value.trim())
+    await loadFolders()
+  } catch {} finally {
+    renamingFolderId.value = null
+  }
+}
+
+async function deleteFolder(id: number) {
+  try {
+    await deleteComponentFolder(id)
+    await loadFolders()
+    Message.success('文件夹已删除')
+  } catch {}
+}
+
+// ---- 运行 ----
+async function runCode() {
+  const tab = activeTab.value
+  if (!tab) return
+  result.value = null
+  if (tab.language === 'sql' && !tab.datasourceId) { Message.warning('请先选择数据源'); return }
+  running.value = true
+  try {
+    if (tab.language === 'sql') {
+      const sel: string = editorRef.value?.getSelectedText?.() ?? ''
+      const sql = (sel || tab.code).trim()
+      if (!sql) { Message.warning('请输入 SQL'); return }
+      result.value = await runSqlAdhoc({ datasource_id: tab.datasourceId!, sql })
+    } else {
+      if (!tab.componentId) { Message.warning('请先保存后再运行'); return }
+      if (tab.dirty) await doSave(tab)
+      result.value = await runComponentScript(tab.componentId!, tab.datasourceId)
+    }
+  } catch (e: any) {
+    result.value = { error: e?.response?.data?.detail || '执行失败' }
+  } finally {
+    running.value = false
+  }
+}
+
+// ---- 保存 ----
+async function saveTab() {
+  const tab = activeTab.value
+  if (!tab) return
+  if (!tab.componentId) {
+    pendingSaveTab.value = tab
+    saveName.value = tab.name.startsWith('Untitled') ? '' : tab.name
+    saveModalVisible.value = true
+    return
+  }
+  await doSave(tab)
+}
+
+async function confirmSave() {
+  if (!saveName.value.trim()) { Message.warning('请输入组件名称'); return }
+  const tab = pendingSaveTab.value
+  if (!tab) return
+  tab.name = saveName.value.trim()
+  await doSave(tab)
+  saveModalVisible.value = false
+  pendingSaveTab.value = null
+}
+
+async function doSave(tab: Tab) {
+  saving.value = true
+  try {
+    // 构造 config_json
+    const langKey = tab.language === 'sql' ? 'sql' : 'script'
+    const config_json: any = { [langKey]: tab.code }
+    if (tab.datasourceId) config_json.datasource_id = tab.datasourceId
+
+    const payload: any = {
+      name: tab.name,
+      type: tab.language,
+      config_json,
+      folder_id: tab.folderId ?? null,
+    }
+    if (tab.componentId) {
+      await updateComponent(tab.componentId, payload)
+    } else {
+      const res: any = await createComponent(payload)
+      tab.componentId = res.id
+    }
+    tab.dirty = false
+    Message.success('已保存')
+    await loadComponents()
+  } catch {} finally {
+    saving.value = false
+  }
+}
+
+async function quickPublish() {
+  const tab = activeTab.value
+  if (!tab?.componentId) return
+  if (tab.dirty) await doSave(tab)
+  try {
+    await quickPublishComponent(tab.componentId!)
+    Message.success('已发布上线')
+    await loadComponents()
+  } catch {}
+}
+
+// ---- 数据加载 ----
+async function loadFolders() {
+  try {
+    const res: any = await getComponentFolders()
+    folders.value = res || []
+  } catch {}
+}
+
+async function loadComponents() {
+  try {
+    const res: any = await getComponents({ page_size: 500 })
+    components.value = res.items || []
+  } catch {}
+}
+
+async function loadDatasources() {
+  try {
+    const res: any = await getDatasources({ page_size: 100 })
+    datasources.value = res.items || []
+  } catch {}
+}
+
+onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]))
+</script>
+
+<style scoped>
+.ide-wrap {
+  display: flex;
+  height: calc(100vh - 110px);
+  background: #fff;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+/* ---- 左侧 ---- */
+.ide-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: #FAFBFC;
+  border-right: 1px solid #E5E6EB;
+}
+.sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid #E5E6EB;
+}
+.sidebar-title { font-size: 14px; font-weight: 600; color: #1D2129; }
+.sidebar-search { padding: 8px 10px; border-bottom: 1px solid #F2F3F5; }
+
+.comp-tree { flex: 1; overflow-y: auto; padding: 4px 0; }
+
+/* 类型组标题 */
+.grp-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4E5969;
+  cursor: pointer;
+  user-select: none;
+}
+.grp-header:hover { background: #F2F3F5; }
+.grp-label { flex: 1; }
+.grp-count {
+  font-size: 11px;
+  background: #E5E6EB;
+  color: #86909C;
+  padding: 1px 5px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.grp-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: #86909C;
+  font-size: 14px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+.grp-header:hover .grp-action { opacity: 1; }
+.grp-action:hover { background: #E5E6EB; color: #2B5AED; }
+.caret { font-size: 11px; color: #86909C; flex-shrink: 0; }
+
+/* 树节点通用 */
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.1s;
+  position: relative;
+}
+.tree-node:hover { background: #F2F3F5; }
+
+/* 文件夹节点 */
+.folder-node { color: #4E5969; }
+.folder-node:hover .node-actions { opacity: 1; }
+.folder-icon { font-size: 14px; color: #F7BA1E; flex-shrink: 0; }
+.node-toggle { display: flex; align-items: center; flex-shrink: 0; }
+
+/* 组件节点 */
+.comp-node { color: #1D2129; }
+.comp-node:hover { background: #EAF1FF; }
+.comp-node.comp-open { background: #EAF1FF; color: #2B5AED; }
+
+.node-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rename-input { flex: 1; height: 22px; font-size: 12px; }
+
+.node-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+  padding-right: 6px;
+}
+.node-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  color: #86909C;
+  font-size: 13px;
+}
+.node-action:hover { background: #E5E6EB; color: #2B5AED; }
+.node-action.danger:hover { background: #FFECE8; color: #F53F3F; }
+
+.lang-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #fff;
+  flex-shrink: 0;
+}
+.badge-sql { background: #2B5AED; }
+.badge-python { background: #3491FA; }
+.badge-shell { background: #722ED1; }
+
+.status-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #C9CDD4;
+}
+.s-online { background: #00B42A; }
+.s-tested { background: #FF7D00; }
+.s-offline { background: #86909C; }
+
+/* ---- 右侧 ---- */
+.ide-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ide-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: #86909C;
+}
+.empty-hint { font-size: 14px; }
+
+/* Tab bar */
+.tab-bar {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  background: #F7F8FA;
+  border-bottom: 1px solid #E5E6EB;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.tabs-scroll {
+  display: flex;
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 100%;
+  scrollbar-width: none;
+}
+.tabs-scroll::-webkit-scrollbar { display: none; }
+.tab-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  height: 100%;
+  white-space: nowrap;
+  cursor: pointer;
+  font-size: 13px;
+  color: #4E5969;
+  border-right: 1px solid #E5E6EB;
+  flex-shrink: 0;
+  transition: background 0.1s;
+}
+.tab-item:hover { background: #EAF1FF; }
+.tab-item.active { background: #fff; color: #2B5AED; border-bottom: 2px solid #2B5AED; }
+.tab-name { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.tab-close {
+  width: 16px; height: 16px;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 50%;
+  font-size: 14px;
+  color: #86909C;
+  flex-shrink: 0;
+}
+.tab-close:hover { background: #F53F3F; color: #fff; }
+.lang-badge-sm {
+  font-size: 9px; font-weight: 700;
+  padding: 1px 3px; border-radius: 2px;
+  color: #fff; flex-shrink: 0;
+}
+.add-tab-btn { flex-shrink: 0; margin: 0 4px; }
+
+/* Toolbar */
+.ide-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #F2F3F5;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+/* Editor */
+.editor-area { flex: 1; min-height: 0; overflow: hidden; }
+
+/* Result panel */
+.result-panel {
+  height: 280px;
+  flex-shrink: 0;
+  border-top: 1px solid #E5E6EB;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+}
+.result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px;
+  border-bottom: 1px solid #F2F3F5;
+  background: #FAFBFC;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.result-info { font-size: 13px; color: #4E5969; }
+.ok-text { color: #00B42A; font-weight: 500; }
+.err-text { color: #F53F3F; font-weight: 500; }
+.result-body { flex: 1; min-height: 0; overflow: auto; }
+.result-spin { display: flex; align-items: center; justify-content: center; padding: 40px; }
+.result-table { font-size: 12px; }
+.result-text { padding: 16px; font-size: 13px; }
+.result-log {
+  margin: 0; padding: 12px 14px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  white-space: pre-wrap; word-break: break-all; line-height: 1.6;
+}
+.log-ok { color: #1D2129; }
+.log-err { color: #F53F3F; }
+</style>

@@ -1,0 +1,233 @@
+"""DSL Translator — 把 Portal Component / Workflow 翻译成 DolphinScheduler 原生 JSON
+
+设计要点:
+- Component (sql/python/shell/datax) → DS Task Definition
+- Workflow (线性步骤) → DS Process Definition (taskDefinitionJson + taskRelationJson + locations)
+- DataX 走 SHELL 节点 + heredoc 临时 JSON,不用 DS 原生 DataX 节点 (spec 冻结要求)
+"""
+import json
+from typing import List, Dict, Any, Tuple, Optional
+
+
+# DS 默认任务参数模板
+DEFAULT_TASK_DEFAULTS = {
+    "version": 0,
+    "delayTime": "0",
+    "flag": "YES",
+    "isCache": "NO",
+    "taskPriority": "MEDIUM",
+    "workerGroup": "default",
+    "environmentCode": -1,
+    "failRetryTimes": "0",
+    "failRetryInterval": "1",
+    "timeoutFlag": "CLOSE",
+    "timeoutNotifyStrategy": "",
+    "timeout": 0,
+    "cpuQuota": -1,
+    "memoryMax": -1,
+    "taskExecuteType": "BATCH",
+}
+
+
+def _datasource_type_for_ds(portal_type: str) -> str:
+    """Portal 数据源 type → DS SQL 节点的 type 字段"""
+    return (portal_type or "").upper() or "MYSQL"
+
+
+def _build_datax_shell_script(config: Dict[str, Any]) -> str:
+    """把 datax 组件 config 翻译成 SHELL 脚本 (heredoc 生成 JSON 后调 datax.py)
+
+    config 期望字段:
+      - rawJson: 完整 DataX job JSON 字符串 (优先)
+      - 或 reader/writer/source_id/target_id: 高阶字段 (Phase 后期实现自动构造)
+    """
+    raw = config.get("rawJson")
+    if not raw:
+        # 兜底:把整个 config 序列化作为 job
+        raw = json.dumps({"job": config}, ensure_ascii=False, indent=2)
+    # 用 heredoc 写入临时文件,然后调用 datax.py
+    # 注意: heredoc 用引号包裹 'EOF' 防止变量展开
+    script = (
+        "set -e\n"
+        "JOB_FILE=/tmp/datax_job_$$_$(date +%s).json\n"
+        "cat > \"$JOB_FILE\" <<'PORTAL_DATAX_EOF'\n"
+        f"{raw}\n"
+        "PORTAL_DATAX_EOF\n"
+        "echo \"[Portal] datax job file: $JOB_FILE\"\n"
+        "python /opt/datax/bin/datax.py \"$JOB_FILE\"\n"
+        "rm -f \"$JOB_FILE\"\n"
+    )
+    return script
+
+
+def translate_component_to_task(
+    component: Any,
+    task_code: int,
+    task_name: Optional[str] = None,
+    datasource_lookup: Optional[Dict[int, Any]] = None,
+) -> Dict[str, Any]:
+    """单个 Component → DS Task Definition JSON
+
+    参数:
+        component: SQLAlchemy Component 实例,需含 .type / .name / .config_json / .description
+        task_code: DS 分配的任务编码
+        task_name: 步骤名 (默认取 component.name)
+        datasource_lookup: {id: DataSource} 用于 SQL 节点查 datasource 类型
+    """
+    cfg = component.config_json or {}
+    ctype = component.type
+    name = task_name or component.name
+    base = {
+        "code": task_code,
+        "name": name,
+        "description": component.description or "",
+        **DEFAULT_TASK_DEFAULTS,
+    }
+
+    if ctype == "sql":
+        ds_id = cfg.get("datasource_id")
+        ds_type = "MYSQL"
+        if datasource_lookup and ds_id and ds_id in datasource_lookup:
+            ds_type = _datasource_type_for_ds(datasource_lookup[ds_id].type)
+        sql_text = cfg.get("sql", "")
+        # 判断 SQL 类型: SELECT 为 query(0),其他为 non-query(1)
+        sql_type = "0" if sql_text.strip().lower().startswith("select") else "1"
+        base["taskType"] = "SQL"
+        base["taskParams"] = {
+            "type": ds_type,
+            "datasource": ds_id,
+            "sql": sql_text,
+            "sqlType": sql_type,
+            "preStatements": cfg.get("preStatements", []),
+            "postStatements": cfg.get("postStatements", []),
+            "displayRows": 10,
+            "localParams": cfg.get("localParams", []),
+            "resourceList": [],
+        }
+        if cfg.get("timeout"):
+            base["timeoutFlag"] = "OPEN"
+            base["timeout"] = int(cfg["timeout"]) // 60 or 1  # DS timeout 单位是分钟
+
+    elif ctype == "python":
+        base["taskType"] = "PYTHON"
+        base["taskParams"] = {
+            "rawScript": cfg.get("script", ""),
+            "resourceList": [],
+            "localParams": cfg.get("localParams", []),
+        }
+        if cfg.get("timeout"):
+            base["timeoutFlag"] = "OPEN"
+            base["timeout"] = int(cfg["timeout"]) // 60 or 1
+
+    elif ctype == "shell":
+        base["taskType"] = "SHELL"
+        base["taskParams"] = {
+            "rawScript": cfg.get("script", ""),
+            "resourceList": [],
+            "localParams": cfg.get("localParams", []),
+        }
+        if cfg.get("timeout"):
+            base["timeoutFlag"] = "OPEN"
+            base["timeout"] = int(cfg["timeout"]) // 60 or 1
+
+    elif ctype == "datax":
+        # DataX 翻译成 SHELL + heredoc
+        base["taskType"] = "SHELL"
+        base["taskParams"] = {
+            "rawScript": _build_datax_shell_script(cfg),
+            "resourceList": [],
+            "localParams": [],
+        }
+        # DataX 默认给更宽松的超时
+        base["timeoutFlag"] = "OPEN"
+        base["timeout"] = max(int(cfg.get("timeout", 1800)) // 60, 5)
+
+    else:
+        raise ValueError(f"不支持的组件类型: {ctype}")
+
+    return base
+
+
+def build_task_relations(task_codes: List[int]) -> List[Dict[str, Any]]:
+    """线性流水线的 task relation (preTaskCode → postTaskCode)
+
+    DS 约定:
+      - 第一个任务用 preTaskCode=0 表示入口
+      - 后续每个任务用前一个的 code 作为 preTaskCode
+    """
+    relations = []
+    if not task_codes:
+        return relations
+    # 入口边
+    relations.append({
+        "preTaskCode": 0,
+        "preTaskVersion": 0,
+        "postTaskCode": task_codes[0],
+        "postTaskVersion": 0,
+        "name": "",
+        "conditionType": "NONE",
+        "conditionParams": {},
+    })
+    # 后续连接
+    for i in range(1, len(task_codes)):
+        relations.append({
+            "preTaskCode": task_codes[i - 1],
+            "preTaskVersion": 0,
+            "postTaskCode": task_codes[i],
+            "postTaskVersion": 0,
+            "name": "",
+            "conditionType": "NONE",
+            "conditionParams": {},
+        })
+    return relations
+
+
+def build_locations(task_codes: List[int]) -> List[Dict[str, Any]]:
+    """线性流水线的节点坐标(DS DAG 图渲染用,横向排列)"""
+    return [
+        {"taskCode": code, "x": 200 + i * 220, "y": 200}
+        for i, code in enumerate(task_codes)
+    ]
+
+
+def translate_workflow(
+    workflow: Any,
+    components_by_id: Dict[int, Any],
+    task_codes: List[int],
+    datasource_lookup: Optional[Dict[int, Any]] = None,
+) -> Dict[str, Any]:
+    """Workflow → DS Process Definition save 所需的 4 个字段
+
+    返回:
+        {
+            "name": ...,
+            "description": ...,
+            "taskDefinitionJson": "[...]",   # 已 JSON 序列化的字符串
+            "taskRelationJson": "[...]",
+            "locations": "[...]",
+        }
+    """
+    steps = workflow.steps_json or []
+    if len(steps) != len(task_codes):
+        raise ValueError(f"steps 数 {len(steps)} 与 task_codes 数 {len(task_codes)} 不一致")
+
+    task_defs = []
+    for step, tcode in zip(steps, task_codes):
+        cid = step.get("component_id")
+        comp = components_by_id.get(cid)
+        if not comp:
+            raise ValueError(f"组件 {cid} 不存在")
+        step_name = step.get("name") or comp.name
+        td = translate_component_to_task(comp, tcode, task_name=step_name, datasource_lookup=datasource_lookup)
+        task_defs.append(td)
+
+    relations = build_task_relations(task_codes)
+    locations = build_locations(task_codes)
+
+    return {
+        "name": workflow.name,
+        "description": workflow.description or "",
+        "taskDefinitionJson": json.dumps(task_defs, ensure_ascii=False),
+        "taskRelationJson": json.dumps(relations, ensure_ascii=False),
+        "locations": json.dumps(locations, ensure_ascii=False),
+    }
