@@ -48,6 +48,22 @@ CREATE TABLE IF NOT EXISTS data_source (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================
+-- 组件文件夹表
+-- ============================================
+CREATE TABLE IF NOT EXISTS component_folder (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(128) NOT NULL COMMENT '文件夹名称',
+    type VARCHAR(50) NOT NULL COMMENT 'sql / python / shell / datax',
+    parent_id BIGINT COMMENT '父文件夹 id',
+    depth INT DEFAULT 0 COMMENT '层级: 0=一级, 1=二级, 2=三级',
+    created_by BIGINT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_type (type),
+    INDEX idx_parent (parent_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ============================================
 -- 同步任务表
 -- ============================================
 CREATE TABLE IF NOT EXISTS sync_task (

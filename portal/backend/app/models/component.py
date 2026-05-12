@@ -23,6 +23,7 @@ class Component(Base):
     status = Column(String(50), default="draft", nullable=False)
     # 发布后映射到 DS Task code (Phase 5+ 填入)
     ds_task_code = Column(BigInteger)
+    folder_id = Column(BigInteger, comment="所属文件夹 id")
     created_by = Column(BigInteger)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

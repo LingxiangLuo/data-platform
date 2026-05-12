@@ -42,6 +42,24 @@ def _migrate_sync_task_columns():
 _migrate_sync_task_columns()
 
 
+def _migrate_component_columns():
+    """component 表按需新增列（文件夹归属）"""
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'component'"
+        )).fetchall()
+        existing = {r[0] for r in rows}
+        if "folder_id" not in existing:
+            conn.execute(text(
+                "ALTER TABLE component ADD COLUMN folder_id BIGINT NULL COMMENT '所属文件夹id'"
+            ))
+            conn.commit()
+
+
+_migrate_component_columns()
+
+
 # 确保管理员密码正确
 def _ensure_admin():
     from app.models.user import SysUser
