@@ -15,6 +15,50 @@
 | 数据资产 | 表资产、字段资产、数据血缘（OpenMetadata） |
 | 系统监控 | 各服务健康状态、DS Worker 资源占用 |
 
+### 数据源管理
+
+![数据源管理](docs/screenshots/datasource-management.png)
+
+### 同步任务 · 字段映射
+
+![同步任务字段映射](docs/screenshots/sync-task-mapping.png)
+
+### 同步任务 · 配置
+
+![同步任务配置](docs/screenshots/sync-task-config.png)
+
+### 代码开发 · SQL IDE
+
+![SQL IDE](docs/screenshots/sql-ide.png)
+
+### 组件管理
+
+![组件管理](docs/screenshots/component-management.png)
+
+### 工作流管理
+
+![工作流管理](docs/screenshots/workflow-management.png)
+
+### 工作流编辑
+
+![工作流编辑](docs/screenshots/workflow-editor.png)
+
+### 运行记录
+
+![运行记录](docs/screenshots/execution-history.png)
+
+### 数据血缘
+
+![数据血缘](docs/screenshots/data-lineage.png)
+
+### 数据资产
+
+![数据资产](docs/screenshots/data-assets.png)
+
+### 系统监控
+
+![系统监控](docs/screenshots/system-monitor.png)
+
 ---
 
 ## 技术架构
