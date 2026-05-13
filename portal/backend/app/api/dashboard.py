@@ -10,6 +10,8 @@ from app.core.ds_client import get_ds_client
 from app.models.user import SysUser
 from app.models.datasource import DataSource
 from app.models.sync_task import SyncTask
+from app.models.workflow import Workflow
+from app.models.word_root import WordRoot
 
 router = APIRouter(prefix="/dashboard", tags=["仪表盘"])
 
@@ -61,15 +63,20 @@ async def get_stats(
                                     params={"startDate": s, "endDate": e})
             trend.append((day_data or {}).get("totalCount", 0))
 
+    # 数据资产统计
+    word_root_count = db.query(func.count(WordRoot.id)).scalar() or 0
+    workflow_count = db.query(func.count(Workflow.id)).scalar() or 0
+
     return {
         "datasource_total": total_ds,
         "datasource_active": active_ds,
         "task_total": total_tasks,
         "task_active": active_tasks,
-        "workflow_total": workflow_total,
+        "workflow_total": workflow_total or workflow_count,
         "yesterday_runs": yesterday_runs,
         "yesterday_success": yesterday_success,
         "yesterday_failure": yesterday_failure,
         "yesterday_pending": yesterday_pending,
         "workflow_trend": trend[-7:],
+        "word_root_count": word_root_count,
     }

@@ -12,7 +12,7 @@
       class="layout-sider"
     >
       <!-- Logo -->
-      <div class="logo" :class="{ collapsed }">
+      <div class="logo" :class="{ collapsed }" @click="router.push('/dashboard')" style="cursor: pointer;">
         <div class="logo-icon">
           <svg width="28" height="28" viewBox="0 0 36 36" fill="none">
             <defs>

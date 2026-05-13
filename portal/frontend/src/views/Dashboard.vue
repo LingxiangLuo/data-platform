@@ -6,7 +6,7 @@
         <div class="welcome-accent"></div>
         <div class="welcome-info">
           <h2 class="welcome-title">欢迎回来，{{ userInfo?.real_name || '管理员' }}</h2>
-          <p class="welcome-desc">数据中台 MVP &middot; 金融行业离线数据统一工作台</p>
+          <p class="welcome-desc">数据中台 MVP · 金融行业离线数据统一工作台</p>
         </div>
       </div>
       <div class="welcome-time">{{ currentTime }}</div>
@@ -14,26 +14,12 @@
 
     <!-- 统计卡片 -->
     <div class="stat-grid">
-      <div v-for="(stat, i) in statCards" :key="i" class="stat-card glass-card" :style="{ animationDelay: `${i * 60}ms` }">
+      <div v-for="(stat, i) in statCards" :key="i" class="stat-card glass-card" @click="$router.push(stat.path)">
         <div class="stat-color-bar" :style="{ background: stat.color }"></div>
         <div class="stat-body">
-          <div class="stat-header">
-            <span class="stat-label">{{ stat.label }}</span>
-          </div>
+          <div class="stat-label">{{ stat.label }}</div>
           <div class="stat-value" :style="{ color: stat.color }">{{ stat.value }}</div>
           <div class="stat-desc">{{ stat.desc }}</div>
-        </div>
-        <div class="stat-sparkline">
-          <svg viewBox="0 0 100 30" preserveAspectRatio="none">
-            <defs>
-              <linearGradient :id="'grad' + i" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" :stop-color="stat.color" stop-opacity="0.15"/>
-                <stop offset="100%" :stop-color="stat.color" stop-opacity="0"/>
-              </linearGradient>
-            </defs>
-            <path :d="stat.sparkline.area" :fill="'url(#grad' + i + ')'" />
-            <path :d="stat.sparkline.line" fill="none" :stroke="stat.color" stroke-width="1.5" />
-          </svg>
         </div>
       </div>
     </div>
@@ -63,60 +49,58 @@
             <span class="dot success"></span>
             <span class="detail-label">成功</span>
             <span class="detail-value">{{ yesterdayData.success }}</span>
-            <span class="detail-pct">{{ yesterdayData.total > 0 ? Math.round(yesterdayData.success / yesterdayData.total * 100) : 0 }}%</span>
           </div>
           <div class="detail-row">
             <span class="dot failure"></span>
             <span class="detail-label">失败</span>
             <span class="detail-value">{{ yesterdayData.failure }}</span>
-            <span class="detail-pct">{{ yesterdayData.total > 0 ? Math.round(yesterdayData.failure / yesterdayData.total * 100) : 0 }}%</span>
           </div>
           <div class="detail-row">
             <span class="dot pending"></span>
             <span class="detail-label">待运行</span>
             <span class="detail-value">{{ yesterdayData.pending }}</span>
-            <span class="detail-pct">{{ yesterdayData.total > 0 ? Math.round(yesterdayData.pending / yesterdayData.total * 100) : 0 }}%</span>
           </div>
         </div>
-        <div class="overview-alert">
-          <div v-if="yesterdayData.failure > 0" class="alert-bar failure" @click="$router.push('/scheduler/history')">
-            <span>⚠ {{ yesterdayData.failure }} 个工作流执行失败</span>
-            <span class="alert-link">查看详情 →</span>
-          </div>
-          <div v-else-if="yesterdayData.total > 0" class="alert-bar success">
-            ✓ 全部执行成功
-          </div>
-          <div v-else class="alert-bar empty">
-            昨日无调度执行
+        <div class="overview-trend">
+          <div class="trend-title">近 7 日趋势</div>
+          <div class="trend-bars">
+            <div v-for="(v, i) in stats.workflow_trend" :key="i" class="trend-bar-wrap">
+              <div class="trend-bar" :style="{ height: trendHeight(v) + 'px', background: v > 0 ? '#2B5AED' : '#E5E8ED' }"></div>
+              <div class="trend-day">{{ trendLabel(i) }}</div>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 快捷入口 + 最近公告 -->
+    <!-- 最近运行 + 快捷操作 -->
     <div class="content-grid">
+      <div class="glass-card recent-section">
+        <div class="section-header">
+          <h3 class="section-title">最近运行</h3>
+          <a-button type="text" size="small" @click="$router.push('/scheduler/history')">查看全部</a-button>
+        </div>
+        <div v-if="recentRuns.length" class="recent-list">
+          <div v-for="run in recentRuns" :key="run.id" class="recent-item">
+            <span class="run-dot" :class="runStatusClass(run.state)"></span>
+            <span class="run-name">{{ run.name }}</span>
+            <span class="run-status" :class="runStatusClass(run.state)">{{ runStatusText(run.state) }}</span>
+            <span class="run-time">{{ formatRunTime(run.endTime || run.startTime) }}</span>
+          </div>
+        </div>
+        <div v-else class="recent-empty">暂无运行记录</div>
+      </div>
+
       <div class="glass-card quick-section">
         <h3 class="section-title">快捷操作</h3>
         <div class="quick-grid">
           <div v-for="item in quickActions" :key="item.title" class="quick-item" @click="$router.push(item.path)">
             <div class="quick-icon" :style="{ background: item.bg }">
-              <component :is="item.icon" style="font-size: 20px;" :style="{ color: item.color }" />
+              <component :is="item.icon" style="font-size: 18px;" :style="{ color: item.color }" />
             </div>
             <span class="quick-label">{{ item.title }}</span>
           </div>
         </div>
-      </div>
-
-      <div class="glass-card notice-section">
-        <h3 class="section-title">系统公告</h3>
-        <a-timeline>
-          <a-timeline-item v-for="(notice, i) in notices" :key="i" :color="notice.color">
-            <div class="notice-row">
-              <span class="notice-text">{{ notice.text }}</span>
-              <span class="notice-time">{{ notice.time }}</span>
-            </div>
-          </a-timeline-item>
-        </a-timeline>
       </div>
     </div>
   </div>
@@ -125,10 +109,12 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useUserStore } from '../stores/user'
-import { getDashboardStats } from '../api'
+import { getDashboardStats, getDSInstances } from '../api'
 import {
   IconLink, IconSync, IconCalendar, IconApps,
+  IconBranch, IconNotification,
 } from '@arco-design/web-vue/es/icon'
+import dayjs from 'dayjs'
 
 const userStore = useUserStore()
 const userInfo = computed(() => userStore.userInfo)
@@ -137,11 +123,13 @@ const currentTime = ref(new Date().toLocaleString('zh-CN'))
 const stats = reactive({
   datasource_total: 0, datasource_active: 0,
   task_total: 0, task_active: 0,
-  workflow_total: 0,
+  workflow_total: 0, word_root_count: 0,
   yesterday_runs: 0, yesterday_success: 0,
   yesterday_failure: 0, yesterday_pending: 0,
   workflow_trend: [] as number[],
 })
+
+const recentRuns = ref<any[]>([])
 
 const yesterdayData = computed(() => ({
   total: stats.yesterday_runs,
@@ -150,62 +138,70 @@ const yesterdayData = computed(() => ({
   pending: stats.yesterday_pending,
 }))
 
-// 圆环图弧长计算
 const donutDash = computed(() => {
   const d = yesterdayData.value
   if (d.total === 0) return '0 314'
   const circumference = 2 * Math.PI * 50
-  const successRatio = d.success / d.total
-  const successLen = successRatio * circumference
+  const successLen = (d.success / d.total) * circumference
   return `${successLen} ${circumference}`
 })
 
-function genSparkline(data: number[]) {
-  const max = Math.max(...data, 1)
-  const points = data.map((v, i) => `${(i / (data.length - 1)) * 100},${30 - (v / max) * 25}`)
-  return {
-    line: `M${points.join(' L')}`,
-    area: `M0,30 L${points.join(' L')} L100,30 Z`,
-  }
-}
-
 const statCards = computed(() => [
-  {
-    label: '数据源', value: stats.datasource_total,
-    desc: `${stats.datasource_active} 个可用`, color: '#2B5AED',
-    sparkline: genSparkline([2,5,8,12,15,18,22,24]),
-  },
-  {
-    label: '同步任务', value: stats.task_total,
-    desc: `${stats.task_active} 个运行中`, color: '#00B42A',
-    sparkline: genSparkline([1,3,5,8,10,12,14,15]),
-  },
-  {
-    label: '调度工作流', value: stats.workflow_total,
-    desc: `昨日执行 ${stats.yesterday_runs} 次`, color: '#FF7D00',
-    sparkline: genSparkline(stats.workflow_trend.length ? stats.workflow_trend : [0,0,0,0,0,0,0]),
-  },
-  {
-    label: '昨日执行', value: stats.yesterday_runs,
-    desc: `成功 ${stats.yesterday_success} / 失败 ${stats.yesterday_failure}`,
-    color: stats.yesterday_failure > 0 ? '#F53F3F' : '#00C9A7',
-    sparkline: genSparkline(stats.workflow_trend.length ? stats.workflow_trend : [0,0,0,0,0,0,0]),
-  },
+  { label: '数据源', value: stats.datasource_total, desc: `${stats.datasource_active} 个可用`, color: '#2B5AED', path: '/datasources' },
+  { label: '同步任务', value: stats.task_total, desc: `${stats.task_active} 个运行中`, color: '#00B42A', path: '/sync-tasks' },
+  { label: '工作流', value: stats.workflow_total, desc: '调度编排', color: '#FF7D00', path: '/workflows' },
+  { label: '词根', value: stats.word_root_count, desc: '命名规范', color: '#00C9A7', path: '/field-assets' },
+  { label: '昨日执行', value: stats.yesterday_runs, desc: stats.yesterday_failure > 0 ? `${stats.yesterday_failure} 个失败` : '全部成功', color: stats.yesterday_failure > 0 ? '#F53F3F' : '#722ED1', path: '/scheduler/history' },
 ])
 
+function trendHeight(v: number) {
+  const max = Math.max(...stats.workflow_trend, 1)
+  return Math.max(4, (v / max) * 48)
+}
+
+function trendLabel(i: number) {
+  const d = dayjs().subtract(6 - i, 'day')
+  return d.format('dd')
+}
+
 const quickActions = [
-  { title: '数据源管理', path: '/datasources', bg: 'rgba(43,90,237,0.08)', color: '#2B5AED', icon: IconLink },
+  { title: '新建工作流', path: '/workflows', bg: 'rgba(255,125,0,0.08)', color: '#FF7D00', icon: IconBranch },
   { title: '新建同步任务', path: '/sync-tasks', bg: 'rgba(0,180,42,0.08)', color: '#00B42A', icon: IconSync },
-  { title: '调度中心', path: '/scheduler', bg: 'rgba(255,125,0,0.08)', color: '#FF7D00', icon: IconCalendar },
-  { title: '数据资产', path: '/assets', bg: 'rgba(0,201,167,0.08)', color: '#00C9A7', icon: IconApps },
+  { title: '数据源管理', path: '/datasources', bg: 'rgba(43,90,237,0.08)', color: '#2B5AED', icon: IconLink },
+  { title: '数据目录', path: '/data-assets', bg: 'rgba(0,201,167,0.08)', color: '#00C9A7', icon: IconApps },
+  { title: '运行实例', path: '/scheduler/history', bg: 'rgba(114,46,209,0.08)', color: '#722ED1', icon: IconCalendar },
+  { title: '监控规则', path: '/alerts', bg: 'rgba(245,63,63,0.08)', color: '#F53F3F', icon: IconNotification },
 ]
 
-const notices = [
-  { text: '数据中台 MVP v1.0 部署完成', time: '今天', color: '#2B5AED' },
-  { text: 'DolphinScheduler 调度服务已就绪', time: '今天', color: '#00B42A' },
-  { text: 'OpenMetadata 数据治理服务已就绪', time: '今天', color: '#00B42A' },
-  { text: '请配置数据源后创建同步任务', time: '今天', color: '#FF7D00' },
-]
+function runStatusClass(state: string) {
+  if (!state) return 'unknown'
+  const s = state.toUpperCase()
+  if (s.includes('SUCCESS')) return 'success'
+  if (s.includes('FAIL') || s.includes('STOP')) return 'failure'
+  if (s.includes('RUNNING')) return 'running'
+  return 'pending'
+}
+
+function runStatusText(state: string) {
+  if (!state) return '未知'
+  const s = state.toUpperCase()
+  if (s.includes('SUCCESS')) return '成功'
+  if (s.includes('FAIL')) return '失败'
+  if (s.includes('STOP')) return '停止'
+  if (s.includes('RUNNING')) return '运行中'
+  return '等待'
+}
+
+function formatRunTime(t: string) {
+  if (!t) return ''
+  const d = dayjs(t)
+  const now = dayjs()
+  const diff = now.diff(d, 'minute')
+  if (diff < 1) return '刚刚'
+  if (diff < 60) return `${diff}分钟前`
+  if (diff < 1440) return `${Math.floor(diff / 60)}小时前`
+  return d.format('MM-DD HH:mm')
+}
 
 onMounted(async () => {
   setInterval(() => { currentTime.value = new Date().toLocaleString('zh-CN') }, 1000)
@@ -213,114 +209,79 @@ onMounted(async () => {
     const res: any = await getDashboardStats()
     Object.assign(stats, res)
   } catch {}
+  try {
+    const res: any = await getDSInstances({ pageSize: 5, pageNo: 1 })
+    recentRuns.value = res?.totalList?.slice(0, 5) || []
+  } catch {}
 })
 </script>
 
 <style scoped>
 .dashboard { max-width: 1200px; animation: fadeIn 0.3s ease-out; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-
-/* 欢迎横幅 */
-.welcome-banner {
-  background: #FFFFFF;
-  border: 1px solid #E5E8ED;
-  border-radius: 10px;
-  padding: 24px 28px;
-  margin-bottom: 20px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
+.welcome-banner { background: #FFFFFF; border: 1px solid #E5E8ED; border-radius: 10px; padding: 24px 28px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
 .welcome-left { display: flex; align-items: stretch; gap: 16px; }
-.welcome-accent {
-  width: 4px;
-  border-radius: 2px;
-  background: linear-gradient(180deg, #2B5AED, #00C9A7);
-  flex-shrink: 0;
-}
+.welcome-accent { width: 4px; border-radius: 2px; background: linear-gradient(180deg, #2B5AED, #00C9A7); }
 .welcome-title { margin: 0 0 4px; font-size: 20px; font-weight: 600; color: #1D2129; }
 .welcome-desc { margin: 0; font-size: 13px; color: #86909C; }
 .welcome-time { font-size: 13px; color: #86909C; font-family: 'JetBrains Mono', monospace; }
-
-/* 统计卡片 */
-.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
-.stat-card {
-  padding: 0;
-  position: relative;
-  overflow: hidden;
-  animation: slideUp 0.3s ease-out backwards;
-  display: flex;
-}
-@keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+.stat-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 20px; }
+.stat-card { padding: 0; display: flex; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; overflow: hidden; }
+.stat-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
 .stat-color-bar { width: 4px; flex-shrink: 0; border-radius: 10px 0 0 10px; }
-.stat-body { padding: 20px; flex: 1; min-width: 0; }
-.stat-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.stat-label { font-size: 13px; color: #86909C; }
-.stat-value { font-size: 28px; font-weight: 700; font-family: 'DM Sans', 'Inter', sans-serif; line-height: 1.2; }
-.stat-desc { font-size: 12px; color: #86909C; margin-top: 4px; }
-.stat-sparkline { position: absolute; bottom: 0; left: 4px; right: 0; height: 30px; opacity: 0.8; }
-.stat-sparkline svg { width: 100%; height: 100%; }
-
-/* 昨日调度概览 */
+.stat-body { padding: 16px; flex: 1; }
+.stat-label { font-size: 12px; color: #86909C; margin-bottom: 6px; }
+.stat-value { font-size: 26px; font-weight: 700; font-family: 'DM Sans', 'Inter', sans-serif; line-height: 1.2; }
+.stat-desc { font-size: 11px; color: #86909C; margin-top: 4px; }
 .overview-section { padding: 20px; margin-bottom: 20px; }
-.overview-grid { display: flex; gap: 40px; align-items: center; }
-.overview-chart { flex-shrink: 0; }
-.donut-wrap { position: relative; width: 120px; height: 120px; }
+.section-title { margin: 0 0 16px; font-size: 15px; font-weight: 600; color: #1D2129; }
+.overview-grid { display: flex; gap: 32px; align-items: center; }
+.donut-wrap { position: relative; width: 100px; height: 100px; }
 .donut-svg { width: 100%; height: 100%; }
-.donut-center {
-  position: absolute; inset: 0;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-}
-.donut-number { font-size: 24px; font-weight: 700; color: #1D2129; }
-.donut-label { font-size: 11px; color: #86909C; }
-.overview-details { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+.donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.donut-number { font-size: 22px; font-weight: 700; color: #1D2129; }
+.donut-label { font-size: 10px; color: #86909C; }
+.overview-details { display: flex; flex-direction: column; gap: 10px; }
 .detail-row { display: flex; align-items: center; gap: 8px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.dot { width: 8px; height: 8px; border-radius: 50%; }
 .dot.success { background: #00B42A; }
 .dot.failure { background: #F53F3F; }
 .dot.pending { background: #FF7D00; }
-.detail-label { font-size: 13px; color: #4E5969; min-width: 48px; }
-.detail-value { font-size: 15px; font-weight: 600; color: #1D2129; min-width: 32px; }
-.detail-pct { font-size: 12px; color: #86909C; }
-.overview-alert { flex: 1; }
-.alert-bar {
-  padding: 10px 16px; border-radius: 8px; font-size: 13px; font-weight: 500;
-  display: flex; justify-content: space-between; align-items: center;
-}
-.alert-bar.failure { background: #FFF2F0; color: #F53F3F; cursor: pointer; }
-.alert-bar.failure:hover { background: #FFE6E2; }
-.alert-bar.success { background: #E8FFF3; color: #00B42A; }
-.alert-bar.empty { background: #F7F8FA; color: #86909C; }
-.alert-link { font-size: 12px; text-decoration: underline; }
-
-/* 内容网格 */
-.content-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
-.section-title { margin: 0 0 16px; font-size: 15px; font-weight: 600; color: #1D2129; }
-
-/* 快捷入口 */
+.detail-label { font-size: 13px; color: #4E5969; min-width: 40px; }
+.detail-value { font-size: 15px; font-weight: 600; color: #1D2129; }
+.overview-trend { flex: 1; margin-left: 24px; }
+.trend-title { font-size: 12px; color: #86909C; margin-bottom: 8px; }
+.trend-bars { display: flex; gap: 8px; align-items: flex-end; height: 64px; }
+.trend-bar-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
+.trend-bar { width: 100%; max-width: 32px; border-radius: 3px 3px 0 0; transition: height 0.3s; }
+.trend-day { font-size: 10px; color: #C9CDD4; }
+.content-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; margin-bottom: 20px; }
+.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.section-header .section-title { margin: 0; }
+.recent-section { padding: 20px; }
+.recent-list { display: flex; flex-direction: column; }
+.recent-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #F2F3F5; }
+.recent-item:last-child { border-bottom: none; }
+.run-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.run-dot.success { background: #00B42A; }
+.run-dot.failure { background: #F53F3F; }
+.run-dot.running { background: #165DFF; animation: pulse 1.5s infinite; }
+.run-dot.pending { background: #FF7D00; }
+.run-dot.unknown { background: #C9CDD4; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+.run-name { flex: 1; font-size: 13px; color: #1D2129; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-status { font-size: 12px; font-weight: 500; }
+.run-status.success { color: #00B42A; }
+.run-status.failure { color: #F53F3F; }
+.run-status.running { color: #165DFF; }
+.run-status.pending { color: #FF7D00; }
+.run-time { font-size: 11px; color: #C9CDD4; white-space: nowrap; }
+.recent-empty { padding: 24px 0; text-align: center; color: #86909C; font-size: 13px; }
 .quick-section { padding: 20px; }
-.quick-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-.quick-item {
-  display: flex; align-items: center; gap: 12px;
-  padding: 14px 16px; border-radius: 8px;
-  cursor: pointer; transition: background 0.15s;
-}
+.quick-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.quick-item { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 8px; cursor: pointer; transition: background 0.15s; }
 .quick-item:hover { background: #F7F8FA; }
-.quick-icon {
-  width: 40px; height: 40px; border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-}
+.quick-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; }
 .quick-label { font-size: 13px; color: #1D2129; font-weight: 500; }
-
-/* 公告 */
-.notice-section { padding: 20px; }
-.notice-row { display: flex; justify-content: space-between; align-items: center; }
-.notice-text { color: #1D2129; font-size: 13px; }
-.notice-time { color: #C9CDD4; font-size: 11px; flex-shrink: 0; margin-left: 12px; }
-
-@media (max-width: 1200px) {
-  .stat-grid { grid-template-columns: repeat(2, 1fr); }
-  .content-grid { grid-template-columns: 1fr; }
-}
+@media (max-width: 1200px) { .stat-grid { grid-template-columns: repeat(3, 1fr); } .content-grid { grid-template-columns: 1fr; } }
 </style>
