@@ -33,7 +33,7 @@
       <!-- 菜单 -->
       <a-menu
         :selected-keys="selectedKeys"
-        :default-open-keys="['integration', 'develop', 'scheduler', 'assets', 'system']"
+        :default-open-keys="['develop', 'ops', 'assets', 'system']"
         @menu-item-click="onMenuClick"
         class="side-menu"
       >
@@ -42,46 +42,33 @@
           工作台
         </a-menu-item>
 
-        <a-sub-menu key="integration">
-          <template #icon><icon-storage /></template>
-          <template #title>数据集成</template>
-          <a-menu-item key="/datasources">
-            <template #icon><icon-link /></template>
-            数据源管理
-          </a-menu-item>
-        </a-sub-menu>
-
         <a-sub-menu key="develop">
           <template #icon><icon-code /></template>
           <template #title>数据开发</template>
-          <a-menu-item key="/sync-tasks">
-            <template #icon><icon-sync /></template>
-            同步任务
+          <a-menu-item key="/workflows">
+            <template #icon><icon-branch /></template>
+            工作流开发
           </a-menu-item>
           <a-menu-item key="/sql-dev">
             <template #icon><icon-code-block /></template>
             代码开发
           </a-menu-item>
-          <a-menu-item key="/components">
-            <template #icon><icon-common /></template>
-            组件管理
+          <a-menu-item key="/sync-tasks">
+            <template #icon><icon-sync /></template>
+            数据同步
           </a-menu-item>
         </a-sub-menu>
 
-        <a-sub-menu key="scheduler">
+        <a-sub-menu key="ops">
           <template #icon><icon-calendar /></template>
-          <template #title>调度中心</template>
-          <a-menu-item key="/workflows">
-            <template #icon><icon-branch /></template>
-            工作流管理
-          </a-menu-item>
-          <a-menu-item key="/scheduler/tasks">
-            <template #icon><icon-clock-circle /></template>
-            调度任务
-          </a-menu-item>
+          <template #title>运维中心</template>
           <a-menu-item key="/scheduler/history">
             <template #icon><icon-history /></template>
-            运行记录
+            运行实例
+          </a-menu-item>
+          <a-menu-item key="/alerts">
+            <template #icon><icon-notification /></template>
+            告警通知
           </a-menu-item>
         </a-sub-menu>
 
@@ -105,6 +92,10 @@
         <a-sub-menu key="system">
           <template #icon><icon-settings /></template>
           <template #title>系统管理</template>
+          <a-menu-item key="/datasources">
+            <template #icon><icon-link /></template>
+            数据源管理
+          </a-menu-item>
           <a-menu-item key="/monitor">
             <template #icon><icon-computer /></template>
             系统监控
@@ -159,7 +150,7 @@
                       <div class="notif-time">{{ n.created_at }}</div>
                     </div>
                   </div>
-                  <div v-if="notifList.length > 0" class="notif-footer" @click="$router.push('/scheduler/history')">查看全部</div>
+                  <div v-if="notifList.length > 0" class="notif-footer" @click="$router.push('/scheduler/history')">查看运行实例</div>
                 </div>
               </template>
             </a-dropdown>
@@ -195,11 +186,11 @@ import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { getNotifications, markNotifRead, markAllRead as apiMarkAllRead } from '../api'
 import {
-  IconDashboard, IconStorage, IconLink, IconSync,
+  IconDashboard, IconLink, IconSync,
   IconCalendar, IconFile, IconApps, IconRelation,
   IconComputer, IconNotification, IconDown, IconUser, IconExport,
-  IconSearch, IconSettings, IconHistory, IconCode, IconCommon, IconBranch,
-  IconClockCircle, IconList, IconCodeBlock, IconCodeSquare,
+  IconSearch, IconSettings, IconHistory, IconCode, IconBranch,
+  IconList, IconCodeBlock,
 } from '@arco-design/web-vue/es/icon'
 
 const router = useRouter()

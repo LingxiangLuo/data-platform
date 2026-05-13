@@ -29,7 +29,7 @@ const router = createRouter({
           path: 'sync-tasks',
           name: 'SyncTasks',
           component: () => import('../views/SyncTask.vue'),
-          meta: { title: '同步任务' },
+          meta: { title: '数据同步' },
         },
         {
           path: 'sql-dev',
@@ -53,23 +53,27 @@ const router = createRouter({
           path: 'workflows',
           name: 'Workflows',
           component: () => import('../views/Workflow.vue'),
-          meta: { title: '工作流管理' },
+          meta: { title: '工作流开发' },
         },
         {
           path: 'scheduler',
-          redirect: '/scheduler/tasks',
+          redirect: '/scheduler/history',
         },
         {
           path: 'scheduler/tasks',
-          name: 'SchedulerTasks',
-          component: () => import('../views/SchedulerTasks.vue'),
-          meta: { title: '调度任务' },
+          redirect: '/workflows',
         },
         {
           path: 'scheduler/history',
-          name: 'SchedulerHistory',
+          name: 'RunInstances',
           component: () => import('../views/SchedulerHistory.vue'),
-          meta: { title: '运行记录' },
+          meta: { title: '运行实例' },
+        },
+        {
+          path: 'alerts',
+          name: 'Alerts',
+          component: () => import('../views/SchedulerTasks.vue'),
+          meta: { title: '告警通知' },
         },
         {
           path: 'data-assets',
