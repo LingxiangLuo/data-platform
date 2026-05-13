@@ -3,7 +3,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY package.json ./
-RUN npm install --fetch-timeout=300000
+RUN npm install
 
 COPY . .
 RUN npm run build || npx vite build
