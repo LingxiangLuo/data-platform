@@ -167,6 +167,26 @@ def update_task(
     return _serialize(task)
 
 
+@router.patch("/{task_id}/status")
+def set_task_status(
+    task_id: int,
+    status: str,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """切换同步任务状态：active（上线/只读保护）/ draft（下线/可编辑）"""
+    allowed = {"draft", "active", "paused"}
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail=f"不支持的状态: {status}")
+    task = db.query(SyncTask).filter(SyncTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    task.status = status
+    db.commit()
+    db.refresh(task)
+    return _serialize(task)
+
+
 @router.delete("/{task_id}")
 def delete_task(
     task_id: int,

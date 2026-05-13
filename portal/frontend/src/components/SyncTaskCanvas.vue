@@ -306,7 +306,7 @@ import {
 import {
   getSyncTask, createSyncTask, updateSyncTask, previewSyncTaskUnsaved,
   getDatasources, getMetadataTables, getMetadataColumns,
-  generateDDL, executeDDL, runSyncTask,
+  generateDDL, executeDDL, runSyncTask, setSyncTaskStatus,
 } from '../api'
 import FieldMappingCanvas from './FieldMappingCanvas.vue'
 
@@ -316,7 +316,7 @@ const props = defineProps<{
   projects: any[]
 }>()
 
-const emit = defineEmits<{ 'saved': [task: any]; 'open-script': [] }>()
+const emit = defineEmits<{ 'saved': [task: any]; 'open-script': []; 'status-changed': [task: any] }>()
 
 const ready = ref(true)
 const task = ref<any>(null)
@@ -551,10 +551,10 @@ async function handleOnline() {
   if (!props.taskId) { Message.warning('请先保存任务'); return }
   toggling.value = true
   try {
-    const res: any = await updateSyncTask(props.taskId, { ...buildPayload(), status: 'active' })
+    const res: any = await setSyncTaskStatus(props.taskId, 'active')
     task.value = res
     Message.success('任务已上线，进入只读保护')
-    emit('saved', res)
+    emit('status-changed', res)
   } catch {} finally { toggling.value = false }
 }
 
@@ -562,10 +562,10 @@ async function handleOffline() {
   if (!props.taskId) return
   toggling.value = true
   try {
-    const res: any = await updateSyncTask(props.taskId, { ...buildPayload(), status: 'draft' })
+    const res: any = await setSyncTaskStatus(props.taskId, 'draft')
     task.value = res
     Message.success('任务已下线，可以编辑')
-    emit('saved', res)
+    emit('status-changed', res)
   } catch {} finally { toggling.value = false }
 }
 

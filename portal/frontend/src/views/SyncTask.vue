@@ -86,6 +86,7 @@
         :project-id="selectedProjectId"
         :projects="projects"
         @saved="onTaskSaved"
+        @status-changed="onStatusChanged"
         @open-script="onOpenScript"
       />
     </div>
@@ -249,6 +250,12 @@ async function onTaskSaved(task: any) {
   selectedTaskId.value = task.id
   selectedProjectId.value = task.project_id ?? null
   canvasKey.value++  // 让 Canvas 用新 task 重新初始化
+}
+
+// 上线/下线只刷新侧边栏状态点，不重建 Canvas
+async function onStatusChanged(task: any) {
+  await loadProjects()
+  await loadAllTasks()
 }
 
 // ---- 项目 CRUD ----

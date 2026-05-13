@@ -51,6 +51,7 @@ export const getSyncTask = (id: number) => api.get(`/sync-tasks/${id}`)
 export const createSyncTask = (data: any) => api.post('/sync-tasks', data)
 export const updateSyncTask = (id: number, data: any) => api.put(`/sync-tasks/${id}`, data)
 export const deleteSyncTask = (id: number) => api.delete(`/sync-tasks/${id}`)
+export const setSyncTaskStatus = (id: number, status: string) => api.patch(`/sync-tasks/${id}/status`, null, { params: { status } })
 export const previewSyncTaskDataX = (id: number) => api.get(`/sync-tasks/${id}/preview-datax`)
 export const previewSyncTaskUnsaved = (data: any) => api.post('/sync-tasks/preview', data)
 export const testSyncTaskConnection = (data: { datasource_id: number; table?: string }) =>
