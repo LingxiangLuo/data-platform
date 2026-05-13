@@ -161,6 +161,7 @@ def preview_table(
             query = f"SELECT * FROM `{table}` LIMIT {limit}"
         elif t == "postgresql":
             # PG 用 psycopg2 直接连接，search_path 已在 _connect 中设置
+            from app.core.db_adapter import _connect
             import psycopg2.extras
             conn = _connect(ds)
             try:
