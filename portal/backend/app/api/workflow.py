@@ -277,7 +277,40 @@ async def sync_last_run(
         except Exception:
             continue
     db.commit()
-    return {"synced": synced}
+
+    # 触发告警规则检查
+    alerted = 0
+    try:
+        from app.models.alert_rule import AlertRule
+        from app.core.notifier import notify as do_notify
+        rules = db.query(AlertRule).filter(AlertRule.enabled == True).all()
+        for w in workflows:
+            if not w.last_run_status:
+                continue
+            for rule in rules:
+                # 匹配监控对象
+                if rule.target_type == "workflow" and rule.target_id != w.id:
+                    continue
+                # 检查触发条件
+                triggered = False
+                if rule.trigger_type == "failure" and w.last_run_status == "FAILURE":
+                    triggered = True
+                elif rule.trigger_type == "timeout" and rule.trigger_value:
+                    if w.last_run_duration and w.last_run_duration > rule.trigger_value:
+                        triggered = True
+                if triggered:
+                    event = {
+                        "workflow_name": w.name,
+                        "status": w.last_run_status,
+                        "time": str(w.last_run_time) if w.last_run_time else "",
+                        "duration": w.last_run_duration,
+                    }
+                    await do_notify(rule, event)
+                    alerted += 1
+    except Exception:
+        pass
+
+    return {"synced": synced, "alerted": alerted}
 
 
 # ===== CRUD =====

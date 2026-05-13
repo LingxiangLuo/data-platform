@@ -58,6 +58,14 @@ export const testSyncTaskConnection = (data: { datasource_id: number; table?: st
   api.post('/sync-tasks/test-connection', data)
 export const runSyncTask = (id: number) => api.post(`/sync-tasks/${id}/run`, undefined, { timeout: 360000 })
 
+// Alert Rules (监控规则)
+export const getAlertRules = () => api.get('/alert-rules')
+export const createAlertRule = (data: any) => api.post('/alert-rules', data)
+export const updateAlertRule = (id: number, data: any) => api.put(`/alert-rules/${id}`, data)
+export const deleteAlertRule = (id: number) => api.delete(`/alert-rules/${id}`)
+export const toggleAlertRule = (id: number) => api.patch(`/alert-rules/${id}/toggle`)
+export const testAlertNotify = (data: any) => api.post('/alert-rules/test-notify', data)
+
 // Projects (同步任务分组)
 export const getProjects = (params?: any) => api.get('/projects', { params })
 export const getProject = (id: number) => api.get(`/projects/${id}`)
