@@ -68,7 +68,7 @@
           </a-menu-item>
           <a-menu-item key="/alerts">
             <template #icon><icon-notification /></template>
-            告警中心
+            监控规则
           </a-menu-item>
         </a-sub-menu>
 

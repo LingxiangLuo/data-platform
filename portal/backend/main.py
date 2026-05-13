@@ -84,6 +84,36 @@ def _migrate_workflow_run_columns():
 _migrate_workflow_run_columns()
 
 
+def _migrate_alert_rule_table():
+    """按需创建 alert_rule 表"""
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT TABLE_NAME FROM information_schema.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'alert_rule'"
+        )).fetchall()
+        if not rows:
+            conn.execute(text("""
+                CREATE TABLE alert_rule (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(128) NOT NULL,
+                    target_type VARCHAR(32) NOT NULL DEFAULT 'all',
+                    target_id BIGINT NULL,
+                    trigger_type VARCHAR(32) NOT NULL,
+                    trigger_value INT NULL,
+                    notify_type VARCHAR(32) NOT NULL,
+                    notify_config JSON NOT NULL,
+                    enabled TINYINT NOT NULL DEFAULT 1,
+                    created_by BIGINT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+            conn.commit()
+
+
+_migrate_alert_rule_table()
+
+
 # 确保管理员密码正确
 def _ensure_admin():
     from app.models.user import SysUser
@@ -145,6 +175,9 @@ app.include_router(workflow.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
 app.include_router(metadata.router, prefix="/api")
 app.include_router(project.router, prefix="/api")
+
+from app.api import alert_rules
+app.include_router(alert_rules.router, prefix="/api")
 
 
 @app.get("/api/health")
