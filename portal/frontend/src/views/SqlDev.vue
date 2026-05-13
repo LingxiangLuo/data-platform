@@ -30,8 +30,8 @@
             </a-tooltip>
           </div>
 
-          <!-- 展开后的树节点 -->
-          <template v-if="!grpCollapsed[grp.type]">
+          <!-- 展开后的树节点（搜索时强制展开）-->
+          <template v-if="searchKw || !grpCollapsed[grp.type]">
             <template v-for="node in flatTree(grp.type)" :key="node.nodeKey">
               <!-- 文件夹行 -->
               <div
