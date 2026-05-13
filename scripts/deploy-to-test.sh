@@ -38,6 +38,8 @@ rsync -avz --delete \
     --exclude='*.pyc' \
     --exclude='portal/frontend/dist' \
     --exclude='portal/backend/.venv' \
+    --exclude='drivers' \
+    --exclude='datax' \
     --exclude='.env' \
     -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" \
     "$PROJECT_DIR/" \
