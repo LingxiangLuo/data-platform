@@ -289,36 +289,10 @@ def test_connection(
     ds = db.query(DataSource).filter(DataSource.id == req.datasource_id).first()
     if not ds:
         raise HTTPException(status_code=404, detail="数据源不存在")
-    t = (ds.type or "").lower()
-    try:
-        if t == "mysql":
-            import pymysql
-            conn = pymysql.connect(
-                host=ds.host, port=ds.port or 3306,
-                user=ds.username, password=ds.password,
-                database=ds.database_name,
-                connect_timeout=5,
-                charset="utf8mb4",
-            )
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-                cur.fetchone()
-                if req.table:
-                    cur.execute(
-                        "SELECT COUNT(*) FROM information_schema.TABLES "
-                        "WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s",
-                        (ds.database_name, req.table),
-                    )
-                    cnt = cur.fetchone()[0]
-                    if cnt == 0:
-                        conn.close()
-                        return {"ok": False, "message": f"表 {req.table} 不存在"}
-            conn.close()
-        else:
-            return {"ok": False, "message": f"暂不支持测试 {ds.type} 数据源"}
-        return {"ok": True, "message": "连接成功"}
-    except Exception as e:
-        return {"ok": False, "message": f"连接失败：{e}"}
+
+    from app.core.db_adapter import test_connection as adapter_test
+    ok, msg = adapter_test(ds, table=req.table)
+    return {"ok": ok, "message": msg}
 
 
 # ============ DataX 执行 ============

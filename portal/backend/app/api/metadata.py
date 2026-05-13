@@ -44,57 +44,29 @@ def _get_ds_or_404(db: Session, ds_id: int) -> DataSource:
 
 
 @router.get("/tables")
-def list_tables(
+def list_tables_api(
     datasource_id: int = Query(..., description="数据源 ID"),
     keyword: Optional[str] = Query(None, description="表名模糊过滤"),
     limit: int = Query(50, ge=1, le=500, description="返回上限，默认 50（前端自动补全用）"),
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """列出数据源所有表 (MySQL: information_schema.tables)"""
+    """列出数据源所有表（支持多种数据库）"""
     ds = _get_ds_or_404(db, datasource_id)
-    if ds.type != "mysql":
-        raise HTTPException(status_code=400, detail=f"暂不支持的数据源类型: {ds.type}")
     try:
-        conn = _connect_mysql(ds, db_override="information_schema")
-        with conn.cursor() as cur:
-            if keyword:
-                cur.execute(
-                    "SELECT TABLE_NAME, TABLE_TYPE, TABLE_ROWS, TABLE_COMMENT, "
-                    "CREATE_TIME, UPDATE_TIME, DATA_LENGTH, INDEX_LENGTH "
-                    "FROM TABLES WHERE TABLE_SCHEMA = %s "
-                    "AND (TABLE_NAME LIKE %s OR TABLE_COMMENT LIKE %s) "
-                    "ORDER BY TABLE_NAME LIMIT %s",
-                    (ds.database_name, f"%{keyword}%", f"%{keyword}%", limit),
-                )
-            else:
-                cur.execute(
-                    "SELECT TABLE_NAME, TABLE_TYPE, TABLE_ROWS, TABLE_COMMENT, "
-                    "CREATE_TIME, UPDATE_TIME, DATA_LENGTH, INDEX_LENGTH "
-                    "FROM TABLES WHERE TABLE_SCHEMA = %s ORDER BY TABLE_NAME LIMIT %s",
-                    (ds.database_name, limit),
-                )
-            rows = cur.fetchall()
-        conn.close()
-        tables = [
-            {
-                "name": r["TABLE_NAME"],
-                "type": r["TABLE_TYPE"],
-                "rows": int(r["TABLE_ROWS"] or 0),
-                "comment": r["TABLE_COMMENT"] or "",
-                "create_time": str(r["CREATE_TIME"]) if r["CREATE_TIME"] else None,
-                "update_time": str(r["UPDATE_TIME"]) if r["UPDATE_TIME"] else None,
-                "data_length": int(r["DATA_LENGTH"] or 0),
-                "index_length": int(r["INDEX_LENGTH"] or 0),
-            }
-            for r in rows
-        ]
+        from app.core.db_adapter import list_tables as adapter_list_tables
+        raw_tables = adapter_list_tables(ds)
+        # keyword 过滤
+        if keyword:
+            kw = keyword.lower()
+            raw_tables = [t for t in raw_tables if kw in t["name"].lower() or kw in t.get("comment", "").lower()]
+        raw_tables = raw_tables[:limit]
         return {
             "datasource_id": ds.id,
             "datasource_name": ds.name,
             "database": ds.database_name,
-            "total": len(tables),
-            "tables": tables,
+            "total": len(raw_tables),
+            "tables": [{"name": t["name"], "comment": t.get("comment", "")} for t in raw_tables],
         }
     except HTTPException:
         raise
@@ -103,32 +75,20 @@ def list_tables(
 
 
 @router.get("/columns")
-def list_columns(
+def list_columns_api(
     datasource_id: int = Query(...),
     table: str = Query(..., min_length=1),
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """列出某张表的字段 (含主键/comment/类型)"""
+    """列出某张表的字段（支持多种数据库）"""
     ds = _get_ds_or_404(db, datasource_id)
-    if ds.type != "mysql":
-        raise HTTPException(status_code=400, detail=f"暂不支持的数据源类型: {ds.type}")
-    # 安全: table 名只允许字母数字下划线
     if not table.replace("_", "").isalnum():
         raise HTTPException(status_code=400, detail="表名格式非法")
     try:
-        conn = _connect_mysql(ds, db_override="information_schema")
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT COLUMN_NAME, ORDINAL_POSITION, COLUMN_TYPE, IS_NULLABLE, "
-                "COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT "
-                "FROM COLUMNS WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s "
-                "ORDER BY ORDINAL_POSITION",
-                (ds.database_name, table),
-            )
-            rows = cur.fetchall()
-        conn.close()
-        if not rows:
+        from app.core.db_adapter import list_columns as adapter_list_columns
+        cols = adapter_list_columns(ds, table)
+        if not cols:
             raise HTTPException(status_code=404, detail=f"表 {table} 不存在")
         return {
             "datasource_id": ds.id,
@@ -136,16 +96,13 @@ def list_columns(
             "table": table,
             "columns": [
                 {
-                    "name": r["COLUMN_NAME"],
-                    "position": r["ORDINAL_POSITION"],
-                    "type": r["COLUMN_TYPE"],
-                    "nullable": r["IS_NULLABLE"] == "YES",
-                    "primary_key": r["COLUMN_KEY"] == "PRI",
-                    "default": r["COLUMN_DEFAULT"],
-                    "extra": r["EXTRA"] or "",
-                    "comment": r["COLUMN_COMMENT"] or "",
+                    "name": c["name"],
+                    "position": i + 1,
+                    "type": c["type"],
+                    "nullable": c.get("nullable", True),
+                    "comment": c.get("comment", ""),
                 }
-                for r in rows
+                for i, c in enumerate(cols)
             ],
         }
     except HTTPException:
@@ -162,30 +119,56 @@ def preview_table(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """前 N 行数据预览 (只读)"""
+    """前 N 行数据预览（支持多种数据库，通过 SQLAlchemy 执行）"""
     ds = _get_ds_or_404(db, datasource_id)
-    if ds.type != "mysql":
-        raise HTTPException(status_code=400, detail=f"暂不支持的数据源类型: {ds.type}")
     if not table.replace("_", "").isalnum():
         raise HTTPException(status_code=400, detail="表名格式非法")
     try:
-        conn = _connect_mysql(ds)
-        with conn.cursor() as cur:
-            cur.execute(f"SELECT * FROM `{table}` LIMIT %s", (limit,))
-            rows = cur.fetchall()
-            columns = [d[0] for d in cur.description] if cur.description else []
-        conn.close()
-        # rows 是 DictCursor 已返回 dict;保证可序列化
-        safe_rows = []
-        for r in rows:
-            safe_rows.append({k: (str(v) if v is not None else None) for k, v in r.items()})
-        return {
-            "datasource_id": ds.id,
-            "table": table,
-            "columns": columns,
-            "rows": safe_rows,
-            "count": len(safe_rows),
-        }
+        import sqlalchemy as sa
+        from app.core.db_adapter import sqlalchemy_url
+        t = (ds.type or "").lower()
+        # MongoDB 用原生驱动
+        if t == "mongodb":
+            from app.core.db_adapter import _connect
+            client = _connect(ds)
+            try:
+                coll = client[ds.database_name][table]
+                docs = list(coll.find().limit(limit))
+                columns = list(docs[0].keys()) if docs else []
+                safe_rows = [{k: (str(v) if v is not None else None) for k, v in d.items()} for d in docs]
+            finally:
+                client.close()
+            return {"datasource_id": ds.id, "table": table, "columns": columns, "rows": safe_rows, "count": len(safe_rows)}
+
+        # Redis 用 SCAN
+        if t == "redis":
+            from app.core.db_adapter import _connect
+            r = _connect(ds)
+            keys = r.keys("*")[:limit]
+            safe_rows = [{"key": k, "value": str(r.get(k))} for k in keys]
+            r.close()
+            return {"datasource_id": ds.id, "table": table, "columns": ["key", "value"], "rows": safe_rows, "count": len(safe_rows)}
+
+        # 其他 SQL 数据库统一用 SQLAlchemy
+        connect_args = {"connect_timeout": 10} if t in ("mysql", "postgresql") else {}
+        engine = sa.create_engine(sqlalchemy_url(ds), pool_pre_ping=True, connect_args=connect_args)
+        # MySQL / PostgreSQL / ClickHouse: LIMIT n; SQLServer: TOP n; Oracle: FETCH FIRST n ROWS ONLY
+        if t == "sqlserver":
+            query = f"SELECT TOP {limit} * FROM [{table}]"
+        elif t == "oracle":
+            query = f"SELECT * FROM \"{table}\" FETCH FIRST {limit} ROWS ONLY"
+        elif t == "clickhouse":
+            query = f"SELECT * FROM `{table}` LIMIT {limit}"
+        else:
+            query = f"SELECT * FROM `{table}` LIMIT {limit}"
+
+        with engine.connect() as conn:
+            res = conn.execute(sa.text(query))
+            columns = list(res.keys())
+            raw_rows = res.fetchmany(limit)
+        engine.dispose()
+        safe_rows = [{k: (str(v) if v is not None else None) for k, v in zip(columns, row)} for row in raw_rows]
+        return {"datasource_id": ds.id, "table": table, "columns": columns, "rows": safe_rows, "count": len(safe_rows)}
     except HTTPException:
         raise
     except Exception as e:
@@ -213,25 +196,61 @@ class ExecuteDDLRequest(BaseModel):
     ddl: str
 
 
-def _generate_mysql_ddl(table: str, columns: List[DDLColumn]) -> str:
+def _generate_ddl_sql(db_type: str, table: str, columns: List[DDLColumn]) -> str:
+    """根据数据库类型生成 CREATE TABLE DDL"""
     if not columns:
         raise HTTPException(status_code=400, detail="字段列表不能为空")
+    t = db_type.lower()
+
+    def _quote(name: str) -> str:
+        if t == "sqlserver":
+            return f"[{name}]"
+        if t == "oracle":
+            return f'"{name.upper()}"'
+        return f"`{name}`"
+
     lines: List[str] = []
     pk_cols: List[str] = []
     for c in columns:
-        ctype = c.type or "varchar(255)"
+        ctype = c.type or ("VARCHAR2(255)" if t == "oracle" else "varchar(255)")
         null_part = "NULL" if c.nullable else "NOT NULL"
-        comment_part = f" COMMENT '{c.comment}'" if c.comment else ""
-        lines.append(f"  `{c.name}` {ctype} {null_part}{comment_part}")
+        comment_part = ""
+        if c.comment:
+            if t == "oracle":
+                comment_part = ""  # Oracle comment 单独加
+            else:
+                comment_part = f" COMMENT '{c.comment}'"
+        lines.append(f"  {_quote(c.name)} {ctype} {null_part}{comment_part}")
         if c.primary_key:
-            pk_cols.append(f"`{c.name}`")
+            pk_cols.append(_quote(c.name))
+
     if pk_cols:
         lines.append(f"  PRIMARY KEY ({', '.join(pk_cols)})")
-    return (
-        f"CREATE TABLE IF NOT EXISTS `{table}` (\n"
-        + ",\n".join(lines)
-        + "\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;"
-    )
+
+    if t == "mysql":
+        return (
+            f"CREATE TABLE IF NOT EXISTS `{table}` (\n"
+            + ",\n".join(lines) + "\n"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;"
+        )
+    if t == "postgresql":
+        return f"CREATE TABLE IF NOT EXISTS {table} (\n" + ",\n".join(lines) + "\n);"
+    if t == "sqlserver":
+        return f"IF OBJECT_ID('{table}', 'U') IS NULL\nCREATE TABLE {table} (\n" + ",\n".join(lines) + "\n);"
+    if t == "oracle":
+        ddl = f"CREATE TABLE {table} (\n" + ",\n".join(lines) + "\n);"
+        # Oracle comment 单独执行
+        comments = [
+            f"COMMENT ON COLUMN {table}.{_quote(c.name)} IS '{c.comment}'"
+            for c in columns if c.comment
+        ]
+        if comments:
+            ddl += "\n" + ";\n".join(comments) + ";"
+        return ddl
+    if t == "clickhouse":
+        return f"CREATE TABLE IF NOT EXISTS {table} (\n" + ",\n".join(lines) + "\n) ENGINE=MergeTree() ORDER BY " + (", ".join(pk_cols) if pk_cols else "tuple()") + ";"
+    # 默认 MySQL 风格
+    return f"CREATE TABLE IF NOT EXISTS `{table}` (\n" + ",\n".join(lines) + "\n);"
 
 
 @router.post("/generate-ddl")
@@ -240,13 +259,11 @@ def generate_ddl(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    """根据字段列表生成 CREATE TABLE DDL（仅返回 SQL，不执行）"""
+    """根据字段列表生成 CREATE TABLE DDL（支持多种数据库）"""
     ds = _get_ds_or_404(db, req.datasource_id)
-    if ds.type != "mysql":
-        raise HTTPException(status_code=400, detail=f"暂不支持的数据源类型: {ds.type}")
     if not req.target_table.replace("_", "").isalnum():
         raise HTTPException(status_code=400, detail="表名格式非法")
-    ddl = _generate_mysql_ddl(req.target_table, req.columns)
+    ddl = _generate_ddl_sql(ds.type or "mysql", req.target_table, req.columns)
     return {"datasource_id": ds.id, "target_table": req.target_table, "ddl": ddl}
 
 
@@ -258,18 +275,19 @@ def execute_ddl(
 ):
     """执行 DDL（只接受 CREATE TABLE 语句以减少风险）"""
     ds = _get_ds_or_404(db, req.datasource_id)
-    if ds.type != "mysql":
-        raise HTTPException(status_code=400, detail=f"暂不支持的数据源类型: {ds.type}")
     sql = (req.ddl or "").strip()
     head = sql.lstrip().upper()
     if not head.startswith("CREATE TABLE"):
         raise HTTPException(status_code=400, detail="仅允许 CREATE TABLE 语句")
     try:
-        conn = _connect_mysql(ds)
-        with conn.cursor() as cur:
-            cur.execute(sql.rstrip(";"))
-        conn.commit()
-        conn.close()
+        import sqlalchemy as sa
+        from app.core.db_adapter import sqlalchemy_url
+        connect_args = {"connect_timeout": 10} if (ds.type or "").lower() in ("mysql", "postgresql") else {}
+        engine = sa.create_engine(sqlalchemy_url(ds), pool_pre_ping=True, connect_args=connect_args)
+        with engine.connect() as conn:
+            conn.execute(sa.text(sql.rstrip(";")))
+            conn.commit()
+        engine.dispose()
         return {"ok": True, "message": "建表成功"}
     except Exception as e:
         return {"ok": False, "message": f"建表失败: {e}"}
@@ -296,28 +314,30 @@ def metadata_stats(
     total_rows = 0
     ds_breakdown = []
     for ds in datasources:
-        if ds.type != "mysql":
-            continue
         try:
-            import pymysql
-            conn = pymysql.connect(
-                host=ds.host, port=ds.port or 3306,
-                user=ds.username, password=ds.password,
-                database=ds.database_name, connect_timeout=5,
-            )
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT COUNT(*), COALESCE(SUM(TABLE_ROWS),0) "
-                "FROM information_schema.TABLES WHERE TABLE_SCHEMA = %s",
-                (ds.database_name,)
-            )
-            row = cur.fetchone()
-            t_count = row[0] or 0
-            t_rows = row[1] or 0
+            from app.core.db_adapter import list_tables as adapter_list_tables
+            t_count = len(adapter_list_tables(ds))
+            # 估算行数（MySQL 特有，其他数据库返回 0）
+            t_rows = 0
+            t = (ds.type or "").lower()
+            if t == "mysql":
+                import pymysql
+                conn = pymysql.connect(
+                    host=ds.host, port=ds.port or 3306,
+                    user=ds.username, password=ds.password,
+                    database=ds.database_name, connect_timeout=5,
+                )
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT COALESCE(SUM(TABLE_ROWS),0) "
+                    "FROM information_schema.TABLES WHERE TABLE_SCHEMA = %s",
+                    (ds.database_name,)
+                )
+                t_rows = cur.fetchone()[0] or 0
+                conn.close()
             table_count += t_count
             total_rows += t_rows
             ds_breakdown.append({"name": ds.name, "tables": t_count, "rows": t_rows})
-            conn.close()
         except Exception:
             ds_breakdown.append({"name": ds.name, "tables": 0, "rows": 0})
 
