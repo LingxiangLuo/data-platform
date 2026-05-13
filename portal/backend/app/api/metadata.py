@@ -156,9 +156,11 @@ def preview_table(
         if t == "sqlserver":
             query = f"SELECT TOP {limit} * FROM [{table}]"
         elif t == "oracle":
-            query = f"SELECT * FROM \"{table}\" FETCH FIRST {limit} ROWS ONLY"
+            query = f'SELECT * FROM "{table}" FETCH FIRST {limit} ROWS ONLY'
         elif t == "clickhouse":
             query = f"SELECT * FROM `{table}` LIMIT {limit}"
+        elif t == "postgresql":
+            query = f'SELECT * FROM "{table}" LIMIT {limit}'
         else:
             query = f"SELECT * FROM `{table}` LIMIT {limit}"
 
