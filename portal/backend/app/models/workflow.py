@@ -23,6 +23,12 @@ class Workflow(Base):
     # 工作流生命周期: draft -> tested -> online -> offline
     status = Column(String(50), default="draft", nullable=False)
     version = Column(Integer, default=1, nullable=False)
+    # 优先级: 1=P1高, 2=P2中, 3=P3低
+    priority = Column(Integer, default=3, nullable=False)
+    # 缓存最近运行信息（由 sync-last-run 端点更新）
+    last_run_status = Column(String(50))
+    last_run_time = Column(DateTime)
+    last_run_duration = Column(Integer)
     # 发布后映射到 DS process-definition code (Phase 5/6 填入)
     ds_process_code = Column(BigInteger)
     # 调度 schedule id (Phase 5/6 填入)
