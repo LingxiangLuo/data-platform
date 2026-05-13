@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from 'vue'
-import { getComponentFolders, getComponents } from '../../api'
+import { getComponentFolders, getComponents, getSyncTasks } from '../../api'
 
 interface TreeNode {
   nodeKey: string
@@ -30,12 +30,24 @@ const grpCollapsed = reactive<Record<string, boolean>>({ sql: true, python: true
 const folderCollapsed = reactive<Record<number, boolean>>({})
 
 onMounted(async () => {
-  const [fRes, cRes]: any[] = await Promise.all([
+  const [fRes, cRes, sRes]: any[] = await Promise.all([
     getComponentFolders(),
     getComponents({ status: 'online', page_size: 500 }),
+    getSyncTasks({ status: 'active', page_size: 500 }),
   ])
   folders.value = Array.isArray(fRes) ? fRes : (fRes.items || [])
-  components.value = (cRes.items || [])
+  const comps = cRes.items || []
+  // 将已上线的 SyncTask 转换为 Component 格式合并进来
+  const syncTasks = (sRes.items || []).map((t: any) => ({
+    id: `sync-${t.id}`,
+    name: t.name,
+    type: 'datax',
+    status: 'online',
+    folder_id: null,
+    _isSyncTask: true,
+    _syncTaskId: t.id,
+  }))
+  components.value = [...comps, ...syncTasks]
 })
 
 function compCountByType(type: string) {
