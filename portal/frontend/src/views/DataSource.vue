@@ -128,8 +128,8 @@ const defaultPorts: Record<string, number> = {
   redis: 6379, hive: 10000,
 }
 
-function onTypeChange(type: string) {
-  form.port = defaultPorts[type] || 3306
+function onTypeChange(type: any) {
+  form.port = defaultPorts[String(type)] || 3306
 }
 
 const columns = [

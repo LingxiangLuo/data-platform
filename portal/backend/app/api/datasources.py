@@ -155,9 +155,9 @@ def test_connection(
             )
             conn.close()
         elif t == "oracle":
-            import cx_Oracle
-            dsn = cx_Oracle.makedsn(ds.host, ds.port, service_name=ds.database_name)
-            conn = cx_Oracle.connect(user=ds.username, password=ds.password or "", dsn=dsn)
+            import oracledb
+            dsn = f"{ds.host}:{ds.port}/{ds.database_name}"
+            conn = oracledb.connect(user=ds.username, password=ds.password or "", dsn=dsn)
             conn.close()
         elif t == "clickhouse":
             from clickhouse_driver import Client
