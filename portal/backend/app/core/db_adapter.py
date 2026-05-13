@@ -239,7 +239,7 @@ def list_tables(ds: DataSource, schema: Optional[str] = None) -> List[Dict[str, 
                 "FROM information_schema.tables t "
                 "LEFT JOIN pg_catalog.pg_class c ON c.relname = t.table_name "
                 "LEFT JOIN pg_catalog.pg_description d ON d.objoid = c.oid AND d.objsubid = 0 "
-                "WHERE t.table_schema='public' ORDER BY t.table_name"
+                "WHERE t.table_schema NOT IN ('pg_catalog','information_schema') ORDER BY t.table_name"
             )
             return [{"name": r[0], "comment": r[1] or ""} for r in cur.fetchall()]
         if t == "sqlserver":
