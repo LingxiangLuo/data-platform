@@ -72,8 +72,14 @@ const router = createRouter({
         {
           path: 'alerts',
           name: 'Alerts',
-          component: () => import('../views/SchedulerTasks.vue'),
-          meta: { title: '告警通知' },
+          component: () => import('../views/AlertCenter.vue'),
+          meta: { title: '告警中心' },
+        },
+        {
+          path: 'ops/instances/:id',
+          name: 'InstanceDetail',
+          component: () => import('../views/InstanceDetail.vue'),
+          meta: { title: '实例详情' },
         },
         {
           path: 'data-assets',

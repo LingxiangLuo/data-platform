@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import { getDSInstances, getDSInstanceTasks, getDSTaskLog, rerunDSInstance } from '../api'
 
@@ -12,6 +13,7 @@ interface Task {
   startTime: string; endTime: string; duration: string
 }
 
+const router = useRouter()
 const instances = ref<Instance[]>([])
 const loading = ref(false)
 const statusFilter = ref('')
@@ -137,6 +139,10 @@ async function rerun(instanceId: number) {
   } catch (e: any) { Message.error(e?.response?.data?.detail || '重跑失败') }
 }
 
+function goDetail(id: number) {
+  router.push(`/ops/instances/${id}`)
+}
+
 function toggleAutoRefresh() {
   autoRefresh.value = !autoRefresh.value
   if (autoRefresh.value) {
@@ -222,7 +228,7 @@ function stateInfo(state: string) {
           <!-- 实例头部 -->
           <div class="inst-header" @click="toggleExpand(inst.id)">
             <span class="inst-expand" :class="{ expanded: expandedKeys.includes(inst.id) }">▶</span>
-            <span class="inst-name">{{ inst.name }}</span>
+            <span class="inst-name" @click.stop="goDetail(inst.id)">{{ inst.name }}</span>
             <span class="inst-state-badge"
               :style="{ color: stateInfo(inst.state).color, background: stateInfo(inst.state).bg }">
               <span v-if="inst.state === 'RUNNING_EXECUTION'" class="pulse-dot-sm"></span>
@@ -297,7 +303,8 @@ function stateInfo(state: string) {
 .inst-header:hover { background: #f7f8fa; }
 .inst-expand { font-size: 10px; color: #86909c; transition: transform 0.2s; flex-shrink: 0; }
 .inst-expand.expanded { transform: rotate(90deg); }
-.inst-name { font-weight: 600; font-size: 14px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inst-name { font-weight: 600; font-size: 14px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.inst-name:hover { color: #165dff; text-decoration: underline; }
 .inst-state-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; flex-shrink: 0; }
 .inst-time { font-size: 12px; color: #86909c; flex-shrink: 0; }
 .inst-duration { font-size: 12px; color: #86909c; min-width: 50px; flex-shrink: 0; }
