@@ -73,7 +73,7 @@
               <!-- 组件行 -->
               <a-dropdown v-else trigger="contextMenu" position="br">
                 <div
-                  :class="['tree-node comp-node', { 'comp-open': isTabOpen(node.id) }]"
+                  :class="['tree-node comp-node', { 'comp-open': isTabActive(node.id) }]"
                   :style="{ paddingLeft: `${14 + node.depth * 16}px` }"
                   @click="openComp(node.data)"
                 >
@@ -335,6 +335,7 @@ interface TreeNode {
 
 function flatTree(type: string): TreeNode[] {
   const kw = searchKw.value.toLowerCase()
+  const searching = !!kw
   const typeFolders = folders.value.filter(f => f.type === type)
   const typeComps = components.value.filter(c => {
     if (c.type !== type) return false
@@ -342,14 +343,24 @@ function flatTree(type: string): TreeNode[] {
     return true
   })
 
+  // 搜索时：递归判断文件夹是否包含匹配项（直接子组件 / 后代组件）
+  function folderHasMatch(folderId: number): boolean {
+    if (typeComps.some(c => c.folder_id === folderId)) return true
+    const subFolders = typeFolders.filter(f => f.parent_id === folderId)
+    return subFolders.some(sub => folderHasMatch(sub.id))
+  }
+
   const result: TreeNode[] = []
 
   function traverse(parentId: number | null, depth: number) {
     // Child folders
     const childFolders = typeFolders.filter(f => (f.parent_id ?? null) === parentId)
     for (const f of childFolders) {
+      // 搜索时只显示有匹配项的文件夹
+      if (searching && !folderHasMatch(f.id)) continue
       result.push({ nodeKey: `f-${f.id}`, kind: 'folder', id: f.id, name: f.name, depth, folderType: type })
-      if (!folderCollapsed[f.id]) {
+      // 搜索时强制展开；否则按用户折叠状态
+      if (searching || !folderCollapsed[f.id]) {
         traverse(f.id, depth + 1)
       }
     }
@@ -369,6 +380,9 @@ function toggleFolder(id: number) { folderCollapsed[id] = !folderCollapsed[id] }
 
 function isTabOpen(compId: number) {
   return tabs.value.some(t => t.componentId === compId)
+}
+function isTabActive(compId: number) {
+  return activeTab.value?.componentId === compId
 }
 
 function openComp(c: any) {
