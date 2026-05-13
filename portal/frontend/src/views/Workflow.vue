@@ -276,7 +276,7 @@ function formatTime(t?: string) {
   return t.replace('T', ' ').split('.')[0]
 }
 
-function canEdit(w: Workflow) { return w.status === 'draft' || w.status === 'tested' }
+function canEdit(w: Workflow) { return w.status === 'draft' || w.status === 'tested' || w.status === 'offline' }
 function canTest(w: Workflow) { return w.status === 'draft' || w.status === 'tested' }
 function canPublish(w: Workflow) { return w.status === 'tested' }
 function canDelete(w: Workflow) { return w.status === 'draft' || w.status === 'offline' }
