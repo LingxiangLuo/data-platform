@@ -166,6 +166,7 @@ export const offlineWorkflow = (id: number) => api.post(`/workflows/${id}/offlin
 export const runWorkflow = (id: number) => api.post(`/workflows/${id}/run`)
 export const scheduleWorkflowOnline = (id: number) => api.post(`/workflows/${id}/schedule/online`)
 export const scheduleWorkflowOffline = (id: number) => api.post(`/workflows/${id}/schedule/offline`)
+export const cronPreview = (cron_expression: string) => api.post('/workflows/cron-preview', { cron_expression })
 export const getScheduledWorkflows = () => api.get('/workflows/scheduled')
 
 export default api
