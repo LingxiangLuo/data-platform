@@ -83,7 +83,8 @@ def list_columns_api(
 ) -> Dict[str, Any]:
     """列出某张表的字段（支持多种数据库）"""
     ds = _get_ds_or_404(db, datasource_id)
-    if not table.replace("_", "").isalnum():
+    # 允许 schema.table 格式
+    if not all(part.replace("_", "").isalnum() for part in table.split(".")):
         raise HTTPException(status_code=400, detail="表名格式非法")
     try:
         from app.core.db_adapter import list_columns as adapter_list_columns
@@ -121,7 +122,8 @@ def preview_table(
 ) -> Dict[str, Any]:
     """前 N 行数据预览（支持多种数据库，通过 SQLAlchemy 执行）"""
     ds = _get_ds_or_404(db, datasource_id)
-    if not table.replace("_", "").isalnum():
+    # 允许 schema.table 格式
+    if not all(part.replace("_", "").isalnum() for part in table.split(".")):
         raise HTTPException(status_code=400, detail="表名格式非法")
     try:
         import sqlalchemy as sa
@@ -160,13 +162,23 @@ def preview_table(
         elif t == "clickhouse":
             query = f"SELECT * FROM `{table}` LIMIT {limit}"
         elif t == "postgresql":
-            # PG 用 psycopg2 直接连接，search_path 已在 _connect 中设置
             from app.core.db_adapter import _connect
             import psycopg2.extras
             conn = _connect(ds)
             try:
                 cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-                cur.execute(f'SELECT * FROM "{table}" LIMIT %s', (limit,))
+                # table 可能是 "schema.name" 格式
+                if "." in table:
+                    sch, tbl = table.split(".", 1)
+                    cur.execute(f'SELECT * FROM "{sch}"."{tbl}" LIMIT %s', (limit,))
+                else:
+                    # 先尝试 search_path，再 fallback schema-qualified
+                    try:
+                        cur.execute(f'SELECT * FROM "{table}" LIMIT %s', (limit,))
+                    except Exception:
+                        conn.rollback()
+                        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                        cur.execute(f'SELECT * FROM "{ds.database_name}"."{table}" LIMIT %s', (limit,))
                 rows = cur.fetchall()
                 columns = list(rows[0].keys()) if rows else [desc[0] for desc in cur.description] if cur.description else []
             finally:
