@@ -125,6 +125,10 @@ export const runComponentScript = (id: number, datasourceId?: number) =>
   api.post(`/components/${id}/run${datasourceId ? `?datasource_id=${datasourceId}` : ''}`, {}, { timeout: 120000 })
 export const quickPublishComponent = (id: number) =>
   api.post(`/components/${id}/quick-publish`)
+export const setComponentStatus = (id: number, status: string) =>
+  api.put(`/components/${id}/status`, { status })
+export const resumeComponent = (id: number) =>
+  api.post(`/components/${id}/resume`)
 
 // Workflows
 export const getWorkflows = (params?: any) => api.get('/workflows', { params })

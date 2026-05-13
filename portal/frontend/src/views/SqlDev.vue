@@ -25,7 +25,7 @@
             </a-tooltip>
             <a-tooltip content="新建组件">
               <span class="grp-action" @click.stop="newBlankTab(grp.type as Language)">
-                <icon-file-add />
+                <icon-plus />
               </span>
             </a-tooltip>
           </div>
@@ -62,7 +62,7 @@
                     <span class="node-action" @click.stop="startNewFolder(node.folderType, node.id)"><icon-folder-add /></span>
                   </a-tooltip>
                   <a-tooltip content="新建组件">
-                    <span class="node-action" @click.stop="newBlankTab(node.folderType as Language, node.id)"><icon-file-add /></span>
+                    <span class="node-action" @click.stop="newBlankTab(node.folderType as Language, node.id)"><icon-plus /></span>
                   </a-tooltip>
                   <a-tooltip content="删除文件夹">
                     <span class="node-action danger" @click.stop="deleteFolder(node.id)"><icon-delete /></span>
@@ -71,18 +71,48 @@
               </div>
 
               <!-- 组件行 -->
-              <div
-                v-else
-                :class="['tree-node comp-node', { 'comp-open': isTabOpen(node.id) }]"
-                :style="{ paddingLeft: `${14 + node.depth * 16}px` }"
-                @click="openComp(node.data)"
-              >
-                <span :class="['lang-badge', `badge-${node.data.type}`]">
-                  {{ node.data.type.slice(0, 2).toUpperCase() }}
-                </span>
-                <span class="node-name">{{ node.name }}</span>
-                <span :class="['status-dot', `s-${node.data.status}`]"></span>
-              </div>
+              <a-dropdown v-else trigger="contextMenu" position="br">
+                <div
+                  :class="['tree-node comp-node', { 'comp-open': isTabOpen(node.id) }]"
+                  :style="{ paddingLeft: `${14 + node.depth * 16}px` }"
+                  @click="openComp(node.data)"
+                >
+                  <span :class="['lang-badge', `badge-${node.data.type}`]">
+                    {{ node.data.type.slice(0, 2).toUpperCase() }}
+                  </span>
+                  <span class="node-name">{{ node.name }}</span>
+                  <span
+                    class="status-tag"
+                    :style="statusTagStyle(node.data.status)"
+                  >
+                    <span
+                      class="status-dot-inline"
+                      :style="{ background: statusColor(node.data.status) }"
+                    ></span>
+                    {{ statusLabel(node.data.status) }}
+                  </span>
+                </div>
+                <template #content>
+                  <a-doption @click="openComp(node.data)">打开</a-doption>
+                  <a-doption-group title="设置状态">
+                    <a-doption
+                      v-for="opt in manualStatusOptions(node.data.status)"
+                      :key="opt.value"
+                      @click="setCompStatus(node.data, opt.value)"
+                    >
+                      <span class="opt-dot" :style="{ background: opt.color }"></span>
+                      {{ opt.label }}
+                    </a-doption>
+                  </a-doption-group>
+                  <a-doption
+                    v-if="node.data.status === 'paused'"
+                    @click="setCompStatus(node.data, '__resume__')"
+                  >从暂停恢复</a-doption>
+                  <a-doption class="opt-danger" @click="confirmDeleteComp(node.data)">
+                    删除
+                  </a-doption>
+                </template>
+              </a-dropdown>
             </template>
           </template>
         </template>
@@ -231,9 +261,10 @@ import {
 } from '@arco-design/web-vue/es/icon'
 import CodeEditor from '../components/CodeEditor.vue'
 import {
-  getComponents, createComponent, updateComponent,
+  getComponents, createComponent, updateComponent, deleteComponent,
   getDatasources, runSqlAdhoc, runComponentScript, quickPublishComponent,
   getComponentFolders, createComponentFolder, renameComponentFolder, deleteComponentFolder,
+  setComponentStatus, resumeComponent,
 } from '../api'
 
 type Language = 'sql' | 'python' | 'shell'
@@ -427,6 +458,76 @@ async function deleteFolder(id: number) {
   } catch {}
 }
 
+// ---- 状态系统 ----
+// 状态定义：自动状态（不可手动设置）+ 手动状态
+const STATUS_DEFS: Record<string, { label: string; color: string; manual: boolean }> = {
+  draft:       { label: '草稿',   color: '#86909C', manual: false },
+  developing:  { label: '开发中', color: '#2B5AED', manual: true  },
+  testing:     { label: '测试中', color: '#FF7D00', manual: true  },
+  reviewing:   { label: '审核中', color: '#14B8A6', manual: true  },
+  tested:      { label: '已测试', color: '#A3C644', manual: true  },
+  online:      { label: '已上线', color: '#00B42A', manual: false },
+  offline:     { label: '已下线', color: '#C9CDD4', manual: true  },
+  paused:      { label: '已暂停', color: '#F53F3F', manual: true  },
+  deprecated:  { label: '已废弃', color: '#6B7280', manual: true  },
+  archived:    { label: '已归档', color: '#722ED1', manual: true  },
+}
+
+function statusLabel(s: string): string {
+  return STATUS_DEFS[s]?.label || s
+}
+function statusColor(s: string): string {
+  return STATUS_DEFS[s]?.color || '#86909C'
+}
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.substring(0, 2), 16)
+  const g = parseInt(h.substring(2, 4), 16)
+  const b = parseInt(h.substring(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+function statusTagStyle(s: string) {
+  const color = statusColor(s)
+  return {
+    background: hexToRgba(color, 0.12),
+    color: color,
+  }
+}
+function manualStatusOptions(current: string) {
+  // 已暂停时，菜单仅显示恢复（在模板单独处理）
+  if (current === 'paused') return []
+  // 已归档不可改
+  if (current === 'archived') return []
+  return Object.entries(STATUS_DEFS)
+    .filter(([k, v]) => v.manual && k !== current)
+    .map(([k, v]) => ({ value: k, label: v.label, color: v.color }))
+}
+
+async function setCompStatus(c: any, status: string) {
+  try {
+    if (status === '__resume__') {
+      await resumeComponent(c.id)
+      Message.success('已从暂停恢复')
+    } else {
+      await setComponentStatus(c.id, status)
+      Message.success('状态已更新')
+    }
+    await loadComponents()
+  } catch {}
+}
+
+async function confirmDeleteComp(c: any) {
+  if (!confirm(`确定删除组件「${c.name}」？此操作不可恢复`)) return
+  try {
+    await deleteComponent(c.id)
+    Message.success('已删除')
+    // 关闭已打开的 tab
+    const idx = tabs.value.findIndex(t => t.componentId === c.id)
+    if (idx >= 0) closeTab(tabs.value[idx].key)
+    await loadComponents()
+  } catch {}
+}
+
 // ---- 运行 ----
 async function runCode() {
   const tab = activeTab.value
@@ -551,7 +652,7 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 
 /* ---- 左侧 ---- */
 .ide-sidebar {
-  width: 260px;
+  width: 280px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -562,25 +663,31 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 14px;
+  padding: 14px 16px;
   border-bottom: 1px solid #E5E6EB;
 }
 .sidebar-title { font-size: 14px; font-weight: 600; color: #1D2129; }
-.sidebar-search { padding: 8px 10px; border-bottom: 1px solid #F2F3F5; }
+.sidebar-search { padding: 10px 12px; border-bottom: 1px solid #F2F3F5; }
 
-.comp-tree { flex: 1; overflow-y: auto; padding: 4px 0; }
+.comp-tree { flex: 1; overflow-y: auto; padding: 6px 0; }
+.comp-tree::-webkit-scrollbar { width: 6px; }
+.comp-tree::-webkit-scrollbar-thumb { background: #E5E6EB; border-radius: 3px; }
+.comp-tree::-webkit-scrollbar-thumb:hover { background: #C9CDD4; }
 
 /* 类型组标题 */
 .grp-header {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
+  gap: 5px;
+  padding: 8px 12px;
   font-size: 12px;
   font-weight: 600;
   color: #4E5969;
   cursor: pointer;
   user-select: none;
+  border-radius: 4px;
+  margin: 1px 6px;
+  transition: background 0.15s;
 }
 .grp-header:hover { background: #F2F3F5; }
 .grp-label { flex: 1; }
@@ -588,7 +695,9 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
   font-size: 11px;
   background: #E5E6EB;
   color: #86909C;
-  padding: 1px 5px;
+  padding: 0 6px;
+  height: 16px;
+  line-height: 16px;
   border-radius: 8px;
   flex-shrink: 0;
 }
@@ -596,50 +705,58 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 4px;
   color: #86909C;
   font-size: 14px;
   flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s;
+  opacity: 0.6;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
 }
 .grp-header:hover .grp-action { opacity: 1; }
-.grp-action:hover { background: #E5E6EB; color: #2B5AED; }
+.grp-action:hover { background: #FFFFFF; color: #2B5AED; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 .caret { font-size: 11px; color: #86909C; flex-shrink: 0; }
 
 /* 树节点通用 */
 .tree-node {
   display: flex;
   align-items: center;
-  gap: 5px;
-  height: 30px;
+  gap: 7px;
+  height: 32px;
   cursor: pointer;
   font-size: 13px;
-  transition: background 0.1s;
+  transition: background 0.15s, color 0.15s;
   position: relative;
+  padding-right: 4px;
 }
 .tree-node:hover { background: #F2F3F5; }
 
 /* 文件夹节点 */
-.folder-node { color: #4E5969; }
+.folder-node { color: #4E5969; font-weight: 500; }
 .folder-node:hover .node-actions { opacity: 1; }
 .folder-icon { font-size: 14px; color: #F7BA1E; flex-shrink: 0; }
-.node-toggle { display: flex; align-items: center; flex-shrink: 0; }
+.node-toggle { display: flex; align-items: center; flex-shrink: 0; cursor: pointer; }
+.node-toggle:hover { color: #2B5AED; }
 
 /* 组件节点 */
 .comp-node { color: #1D2129; }
 .comp-node:hover { background: #EAF1FF; }
-.comp-node.comp-open { background: #EAF1FF; color: #2B5AED; }
+.comp-node:hover .status-tag { opacity: 0.95; }
+.comp-node.comp-open {
+  background: linear-gradient(90deg, #EAF1FF 0%, #F0F5FF 100%);
+  color: #2B5AED;
+  font-weight: 500;
+  box-shadow: inset 3px 0 0 0 #2B5AED;
+}
 
-.node-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rename-input { flex: 1; height: 22px; font-size: 12px; }
 
 .node-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   opacity: 0;
   transition: opacity 0.15s;
   flex-shrink: 0;
@@ -649,36 +766,65 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
   color: #86909C;
   font-size: 13px;
+  transition: background 0.15s, color 0.15s;
 }
-.node-action:hover { background: #E5E6EB; color: #2B5AED; }
-.node-action.danger:hover { background: #FFECE8; color: #F53F3F; }
+.node-action:hover { background: #FFFFFF; color: #2B5AED; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+.node-action.danger:hover { background: #FFECE8; color: #F53F3F; box-shadow: 0 1px 3px rgba(245,63,63,0.15); }
 
 .lang-badge {
   font-size: 9px;
   font-weight: 700;
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding: 2px 5px;
+  border-radius: 4px;
   color: #fff;
   flex-shrink: 0;
+  letter-spacing: 0.3px;
+  min-width: 20px;
+  text-align: center;
 }
-.badge-sql { background: #2B5AED; }
-.badge-python { background: #3491FA; }
-.badge-shell { background: #722ED1; }
+.badge-sql { background: linear-gradient(135deg, #2B5AED 0%, #3B7CFF 100%); }
+.badge-python { background: linear-gradient(135deg, #3491FA 0%, #5BAEFD 100%); }
+.badge-shell { background: linear-gradient(135deg, #722ED1 0%, #9558DB 100%); }
+.badge-datax { background: linear-gradient(135deg, #FF7D00 0%, #FFA133 100%); }
 
-.status-dot {
-  width: 5px; height: 5px;
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  margin-left: auto;
+  margin-right: 8px;
+  height: 18px;
+  line-height: 16px;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+.status-dot-inline {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-  background: #C9CDD4;
+  box-shadow: 0 0 0 1.5px rgba(255,255,255,0.6);
 }
-.s-online { background: #00B42A; }
-.s-tested { background: #FF7D00; }
-.s-offline { background: #86909C; }
+.opt-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.opt-danger { color: #F53F3F !important; }
+.opt-danger:hover { background: #FFECE8 !important; }
 
 /* ---- 右侧 ---- */
 .ide-main {

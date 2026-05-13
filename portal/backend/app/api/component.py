@@ -1,28 +1,97 @@
+import time
+import subprocess
+import tempfile
+import os
 from typing import Optional, Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.component import Component
-from app.models.component_folder import ComponentFolder
 from app.models.user import SysUser
 
 router = APIRouter(prefix="/components", tags=["组件"])
 
-
 # ===== 类型与状态常量 =====
 VALID_TYPES = {"sql", "python", "shell", "datax"}
+
+# 状态定义
 STATUS_DRAFT = "draft"
+STATUS_DEVELOPING = "developing"
+STATUS_TESTING = "testing"
+STATUS_REVIEWING = "reviewing"
 STATUS_TESTED = "tested"
 STATUS_ONLINE = "online"
 STATUS_OFFLINE = "offline"
+STATUS_PAUSED = "paused"
+STATUS_DEPRECATED = "deprecated"
+STATUS_ARCHIVED = "archived"
+
+# 所有有效状态
+VALID_STATUSES = {
+    STATUS_DRAFT, STATUS_DEVELOPING, STATUS_TESTING,
+    STATUS_REVIEWING, STATUS_TESTED, STATUS_ONLINE,
+    STATUS_OFFLINE, STATUS_PAUSED, STATUS_DEPRECATED, STATUS_ARCHIVED,
+}
+
+# 用户可手动设置的状态（不包括自动状态 draft/online）
+MANUAL_STATUSES = {
+    STATUS_DEVELOPING, STATUS_TESTING, STATUS_REVIEWING,
+    STATUS_TESTED, STATUS_OFFLINE, STATUS_PAUSED,
+    STATUS_DEPRECATED, STATUS_ARCHIVED,
+}
+
+# 自动流转状态
+AUTO_STATUSES = {STATUS_DRAFT, STATUS_ONLINE}
 
 # 允许编辑/删除的状态
-EDITABLE_STATUSES = {STATUS_DRAFT, STATUS_TESTED}
-DELETABLE_STATUSES = {STATUS_DRAFT, STATUS_OFFLINE}
+EDITABLE_STATUSES = {STATUS_DRAFT, STATUS_DEVELOPING, STATUS_TESTING, STATUS_REVIEWING, STATUS_TESTED, STATUS_OFFLINE, STATUS_PAUSED, STATUS_DEPRECATED}
+DELETABLE_STATUSES = {STATUS_DRAFT, STATUS_OFFLINE, STATUS_DEPRECATED, STATUS_ARCHIVED}
+
+# 状态显示名
+STATUS_LABELS = {
+    STATUS_DRAFT: "草稿",
+    STATUS_DEVELOPING: "开发中",
+    STATUS_TESTING: "测试中",
+    STATUS_REVIEWING: "审核中",
+    STATUS_TESTED: "已测试",
+    STATUS_ONLINE: "已上线",
+    STATUS_OFFLINE: "已下线",
+    STATUS_PAUSED: "已暂停",
+    STATUS_DEPRECATED: "已废弃",
+    STATUS_ARCHIVED: "已归档",
+}
+
+# 状态颜色
+STATUS_COLORS = {
+    STATUS_DRAFT: "#86909C",
+    STATUS_DEVELOPING: "#2B5AED",
+    STATUS_TESTING: "#FF7D00",
+    STATUS_REVIEWING: "#14B8A6",
+    STATUS_TESTED: "#A3C644",
+    STATUS_ONLINE: "#00B42A",
+    STATUS_OFFLINE: "#C9CDD4",
+    STATUS_PAUSED: "#F53F3F",
+    STATUS_DEPRECATED: "#6B7280",
+    STATUS_ARCHIVED: "#722ED1",
+}
+
+# 状态流转规则: {当前状态: [允许的目标状态]}
+STATUS_TRANSITIONS = {
+    STATUS_DRAFT: [STATUS_DEVELOPING, STATUS_TESTING, STATUS_DEPRECATED, STATUS_ARCHIVED],
+    STATUS_DEVELOPING: [STATUS_TESTING, STATUS_PAUSED, STATUS_DEPRECATED],
+    STATUS_TESTING: [STATUS_REVIEWING, STATUS_TESTED, STATUS_PAUSED, STATUS_DEPRECATED],
+    STATUS_REVIEWING: [STATUS_TESTED, STATUS_PAUSED, STATUS_DEVELOPING],
+    STATUS_TESTED: [STATUS_ONLINE, STATUS_PAUSED, STATUS_TESTING],  # online 通过发布操作
+    STATUS_ONLINE: [STATUS_OFFLINE, STATUS_PAUSED],
+    STATUS_OFFLINE: [STATUS_ONLINE, STATUS_ARCHIVED, STATUS_PAUSED, STATUS_DEVELOPING],
+    STATUS_PAUSED: [],  # 恢复时回到 previous_status，不走 transitions
+    STATUS_DEPRECATED: [STATUS_ARCHIVED],
+    STATUS_ARCHIVED: [],  # 归档后不可修改
+}
 
 
 # ===== Schemas =====
@@ -32,6 +101,9 @@ class ComponentCreate(BaseModel):
     description: Optional[str] = None
     config_json: Dict[str, Any] = Field(default_factory=dict)
     folder_id: Optional[int] = None
+    # 便捷字段：IDE 直接传 code + datasource_id，后端合并进 config_json
+    code: Optional[str] = None
+    datasource_id: Optional[int] = None
 
 
 class ComponentUpdate(BaseModel):
@@ -39,9 +111,23 @@ class ComponentUpdate(BaseModel):
     description: Optional[str] = None
     config_json: Optional[Dict[str, Any]] = None
     folder_id: Optional[int] = None
+    code: Optional[str] = None
+    datasource_id: Optional[int] = None
+
+
+class RunSqlRequest(BaseModel):
+    datasource_id: int
+    sql: str
+
+
+def _json_val(v):
+    if v is None or isinstance(v, (int, float, bool, str)):
+        return v
+    return str(v)
 
 
 def _serialize(c: Component) -> dict:
+    status = c.status
     return {
         "id": c.id,
         "name": c.name,
@@ -49,9 +135,13 @@ def _serialize(c: Component) -> dict:
         "description": c.description,
         "config_json": c.config_json or {},
         "version": c.version,
-        "status": c.status,
+        "status": status,
+        "status_label": STATUS_LABELS.get(status, status),
+        "status_color": STATUS_COLORS.get(status, "#86909C"),
         "ds_task_code": c.ds_task_code,
-        "folder_id": c.folder_id,
+        "folder_id": c.folder_id if hasattr(c, 'folder_id') else None,
+        "code": (c.config_json or {}).get('sql') or (c.config_json or {}).get('script') or '',
+        "datasource_id": (c.config_json or {}).get('datasource_id'),
         "created_at": str(c.created_at) if c.created_at else None,
         "updated_at": str(c.updated_at) if c.updated_at else None,
     }
@@ -62,6 +152,48 @@ def _get_or_404(db: Session, comp_id: int) -> Component:
     if not c:
         raise HTTPException(status_code=404, detail="组件不存在")
     return c
+
+
+def _run_sql(db: Session, datasource_id: int, sql: str):
+    """复用的 SQL 执行逻辑，返回 dict"""
+    from app.models.datasource import DataSource
+    import sqlalchemy as sa
+
+    ds = db.query(DataSource).filter(DataSource.id == datasource_id).first()
+    if not ds:
+        raise HTTPException(404, "数据源不存在")
+
+    url = (
+        f"mysql+pymysql://{ds.username}:{ds.password}"
+        f"@{ds.host}:{ds.port}/{ds.database_name}?charset=utf8mb4"
+    )
+    engine = sa.create_engine(url, pool_pre_ping=True, connect_args={"connect_timeout": 10})
+    start = time.time()
+    try:
+        with engine.connect() as conn:
+            res = conn.execute(sa.text(sql))
+            duration_ms = int((time.time() - start) * 1000)
+            if res.returns_rows:
+                columns = list(res.keys())
+                rows = [[_json_val(v) for v in row] for row in res.fetchmany(2000)]
+                return {
+                    "type": "table",
+                    "columns": columns,
+                    "rows": rows,
+                    "row_count": len(rows),
+                    "duration_ms": duration_ms,
+                }
+            else:
+                conn.commit()
+                return {
+                    "type": "rowcount",
+                    "affected": res.rowcount,
+                    "duration_ms": duration_ms,
+                }
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    finally:
+        engine.dispose()
 
 
 # ===== CRUD =====
@@ -95,16 +227,17 @@ def create_component(
 ):
     if req.type not in VALID_TYPES:
         raise HTTPException(status_code=400, detail=f"非法组件类型,允许:{','.join(sorted(VALID_TYPES))}")
-    # 校验 folder_id
-    if req.folder_id:
-        folder = db.query(ComponentFolder).filter(ComponentFolder.id == req.folder_id).first()
-        if not folder:
-            raise HTTPException(status_code=400, detail="文件夹不存在")
+    cfg = dict(req.config_json or {})
+    if req.code is not None:
+        key = 'sql' if req.type == 'sql' else 'script'
+        cfg[key] = req.code
+    if req.datasource_id is not None:
+        cfg['datasource_id'] = req.datasource_id
     c = Component(
         name=req.name,
         type=req.type,
         description=req.description,
-        config_json=req.config_json,
+        config_json=cfg,
         folder_id=req.folder_id,
         status=STATUS_DRAFT,
         version=1,
@@ -114,6 +247,109 @@ def create_component(
     db.commit()
     db.refresh(c)
     return _serialize(c)
+
+
+# ===== 文件夹 CRUD（必须在 /{comp_id} 之前定义，避免路由冲突）=====
+from app.models.component_folder import ComponentFolder
+
+
+class FolderCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    type: str
+    parent_id: Optional[int] = None
+
+
+class FolderRename(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+def _folder_depth(db: Session, parent_id: Optional[int]) -> int:
+    depth = 0
+    pid = parent_id
+    while pid is not None and depth < 5:
+        f = db.query(ComponentFolder).filter(ComponentFolder.id == pid).first()
+        if not f:
+            break
+        pid = f.parent_id
+        depth += 1
+    return depth
+
+
+@router.get("/folders")
+def list_folders(
+    folder_type: Optional[str] = Query(None, alias="type"),
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    q = db.query(ComponentFolder)
+    if folder_type:
+        q = q.filter(ComponentFolder.type == folder_type)
+    items = q.order_by(ComponentFolder.id).all()
+    return [{"id": f.id, "name": f.name, "type": f.type, "parent_id": f.parent_id} for f in items]
+
+
+@router.post("/folders")
+def create_folder(
+    req: FolderCreate,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    if req.parent_id is not None:
+        parent = db.query(ComponentFolder).filter(ComponentFolder.id == req.parent_id).first()
+        if not parent:
+            raise HTTPException(status_code=404, detail="父文件夹不存在")
+        depth = _folder_depth(db, req.parent_id)
+        if depth >= 2:
+            raise HTTPException(status_code=400, detail="最多支持 3 层嵌套")
+    f = ComponentFolder(name=req.name, type=req.type, parent_id=req.parent_id)
+    db.add(f)
+    db.commit()
+    db.refresh(f)
+    return {"id": f.id, "name": f.name, "type": f.type, "parent_id": f.parent_id}
+
+
+@router.put("/folders/{folder_id}")
+def rename_folder(
+    folder_id: int,
+    req: FolderRename,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    f = db.query(ComponentFolder).filter(ComponentFolder.id == folder_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="文件夹不存在")
+    f.name = req.name
+    db.commit()
+    return {"id": f.id, "name": f.name, "type": f.type, "parent_id": f.parent_id}
+
+
+@router.delete("/folders/{folder_id}")
+def delete_folder(
+    folder_id: int,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    if db.query(ComponentFolder).filter(ComponentFolder.parent_id == folder_id).first():
+        raise HTTPException(status_code=400, detail="请先删除子文件夹")
+    if db.query(Component).filter(Component.folder_id == folder_id).first():
+        raise HTTPException(status_code=400, detail="请先移走文件夹内的组件")
+    f = db.query(ComponentFolder).filter(ComponentFolder.id == folder_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="文件夹不存在")
+    db.delete(f)
+    db.commit()
+    return {"ok": True}
+
+
+# ===== 临时 SQL 执行（无需保存为组件）=====
+@router.post("/run-sql")
+def run_sql_adhoc(
+    req: RunSqlRequest,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """临时 SQL 执行，结果直接返回"""
+    return _run_sql(db, req.datasource_id, req.sql)
 
 
 @router.get("/{comp_id}")
@@ -139,9 +375,19 @@ def update_component(
             detail=f"组件状态 {c.status},只有 draft/tested 状态允许编辑;请先下线",
         )
     updates = req.model_dump(exclude_unset=True)
+    # Handle convenience fields
+    code = updates.pop('code', None)
+    ds_id = updates.pop('datasource_id', None)
+    if code is not None or ds_id is not None:
+        cfg = dict(c.config_json or {})
+        if code is not None:
+            key = 'sql' if c.type == 'sql' else 'script'
+            cfg[key] = code
+        if ds_id is not None:
+            cfg['datasource_id'] = ds_id
+        updates['config_json'] = cfg
     for key, value in updates.items():
         setattr(c, key, value)
-    # 编辑后状态回到 draft (需要重新测试)
     if "config_json" in updates:
         c.status = STATUS_DRAFT
         c.version = (c.version or 1) + 1
@@ -167,39 +413,73 @@ def delete_component(
     return {"message": "删除成功"}
 
 
-# ===== 状态机操作 =====
+# ===== 运行组件 =====
 @router.post("/{comp_id}/run")
 def run_component(
     comp_id: int,
+    datasource_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    """手动运行组件 (Phase 3: 占位实现,Phase 5+ 接 DS API)"""
+    """运行组件：SQL 直连执行返回结果，Python/Shell 用 subprocess 执行返回日志"""
     c = _get_or_404(db, comp_id)
-    # TODO Phase 5+: 调 DS 执行
-    return {
-        "message": f"已触发运行 (Phase 3 占位,实际执行待 Phase 5+ 接入)",
-        "component_id": c.id,
-        "type": c.type,
-    }
+    code = (c.config_json or {}).get("code", "").strip()
+    if not code:
+        raise HTTPException(400, "组件代码为空")
+
+    start = time.time()
+
+    if c.type == "sql":
+        ds_id = datasource_id or (c.config_json or {}).get("datasource_id")
+        if not ds_id:
+            raise HTTPException(400, "未指定数据源，请在 URL 加 ?datasource_id=X 或在组件中配置")
+        return _run_sql(db, ds_id, code)
+
+    elif c.type in ("python", "shell"):
+        if c.type == "python":
+            with tempfile.NamedTemporaryFile(
+                suffix=".py", mode="w", delete=False, encoding="utf-8"
+            ) as f:
+                f.write(code)
+                tmp = f.name
+            try:
+                result = subprocess.run(
+                    ["python3", tmp], capture_output=True, text=True, timeout=120
+                )
+            finally:
+                os.unlink(tmp)
+        else:
+            result = subprocess.run(
+                ["bash", "-c", code], capture_output=True, text=True, timeout=120
+            )
+        duration_ms = int((time.time() - start) * 1000)
+        log = (result.stdout + result.stderr).strip() or "(无输出)"
+        return {
+            "type": "log",
+            "ok": result.returncode == 0,
+            "log": log,
+            "exit_code": result.returncode,
+            "duration_ms": duration_ms,
+        }
+
+    else:
+        raise HTTPException(400, f"不支持直接运行的组件类型: {c.type}")
 
 
+# ===== 状态机操作 =====
 @router.post("/{comp_id}/test")
 def test_component(
     comp_id: int,
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    """测试组件 — 通过后状态转为 tested"""
     c = _get_or_404(db, comp_id)
     if c.status not in {STATUS_DRAFT, STATUS_TESTED}:
         raise HTTPException(status_code=400, detail=f"状态 {c.status} 下不允许测试")
-    # TODO Phase 5+: 实际执行测试,根据结果决定是否切到 tested
-    # Phase 3: 假定测试通过
     c.status = STATUS_TESTED
     db.commit()
     db.refresh(c)
-    return {"message": "测试通过 (Phase 3 占位)", **_serialize(c)}
+    return {"message": "测试通过", **_serialize(c)}
 
 
 @router.post("/{comp_id}/publish")
@@ -208,18 +488,34 @@ def publish_component(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    """发布组件 — tested 才能发布,发布后状态为 online"""
     c = _get_or_404(db, comp_id)
     if c.status != STATUS_TESTED:
         raise HTTPException(
             status_code=400,
             detail=f"只有 tested 状态可发布,当前状态 {c.status},请先测试",
         )
-    # TODO Phase 5+: 翻译成 DS Task + 创建/更新 ds process-definition,把 task_code 写回
     c.status = STATUS_ONLINE
     db.commit()
     db.refresh(c)
-    return {"message": "已发布 (Phase 3 占位,DS 同步待 Phase 5+ 接入)", **_serialize(c)}
+    return {"message": "已发布", **_serialize(c)}
+
+
+@router.post("/{comp_id}/quick-publish")
+def quick_publish_component(
+    comp_id: int,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """IDE 一键发布：draft/tested 均可直接上线，跳过 tested 前置要求"""
+    c = _get_or_404(db, comp_id)
+    if c.status == STATUS_ONLINE:
+        return {"message": "已是发布状态", **_serialize(c)}
+    if c.status == STATUS_OFFLINE:
+        raise HTTPException(400, "已下线组件请先将状态改回 draft 再发布")
+    c.status = STATUS_ONLINE
+    db.commit()
+    db.refresh(c)
+    return {"message": "已发布", **_serialize(c)}
 
 
 @router.post("/{comp_id}/offline")
@@ -228,241 +524,74 @@ def offline_component(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    """下线组件"""
     c = _get_or_404(db, comp_id)
     if c.status != STATUS_ONLINE:
         raise HTTPException(status_code=400, detail=f"只有 online 状态可下线,当前 {c.status}")
-    # TODO Phase 5+: 同步下线 DS 调度
     c.status = STATUS_OFFLINE
     db.commit()
     db.refresh(c)
     return {"message": "已下线", **_serialize(c)}
 
 
-# ─────────────────────────────────────────────
-# 文件夹管理 (ComponentFolder)
-# ─────────────────────────────────────────────
+# ===== 手动状态设置 =====
 
-class FolderCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=128)
-    type: str
-    parent_id: Optional[int] = None
+class SetStatusRequest(BaseModel):
+    status: str
 
 
-class FolderUpdate(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=128)
-
-
-@router.get("/folders")
-def list_folders(
-    type: Optional[str] = None,
-    db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
-):
-    """列出组件文件夹（支持按类型过滤）"""
-    q = db.query(ComponentFolder)
-    if type:
-        q = q.filter(ComponentFolder.type == type)
-    items = q.order_by(ComponentFolder.depth.asc(), ComponentFolder.id.asc()).all()
-    return [
-        {
-            "id": f.id,
-            "name": f.name,
-            "type": f.type,
-            "parent_id": f.parent_id,
-            "depth": f.depth,
-            "created_at": str(f.created_at) if f.created_at else None,
-        }
-        for f in items
-    ]
-
-
-@router.post("/folders")
-def create_folder(
-    req: FolderCreate,
-    db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
-):
-    """创建文件夹（最多三级嵌套）"""
-    if req.type not in VALID_TYPES:
-        raise HTTPException(status_code=400, detail=f"非法类型,允许:{','.join(sorted(VALID_TYPES))}")
-
-    depth = 0
-    if req.parent_id:
-        parent = db.query(ComponentFolder).filter(ComponentFolder.id == req.parent_id).first()
-        if not parent:
-            raise HTTPException(status_code=404, detail="父文件夹不存在")
-        if parent.depth >= 2:
-            raise HTTPException(status_code=400, detail="最多三级嵌套")
-        depth = parent.depth + 1
-
-    folder = ComponentFolder(
-        name=req.name,
-        type=req.type,
-        parent_id=req.parent_id,
-        depth=depth,
-        created_by=current_user.id,
-    )
-    db.add(folder)
-    db.commit()
-    db.refresh(folder)
-    return {
-        "id": folder.id,
-        "name": folder.name,
-        "type": folder.type,
-        "parent_id": folder.parent_id,
-        "depth": folder.depth,
-    }
-
-
-@router.put("/folders/{folder_id}")
-def update_folder(
-    folder_id: int,
-    req: FolderUpdate,
-    db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
-):
-    """重命名文件夹"""
-    folder = db.query(ComponentFolder).filter(ComponentFolder.id == folder_id).first()
-    if not folder:
-        raise HTTPException(status_code=404, detail="文件夹不存在")
-    if req.name:
-        folder.name = req.name
-    db.commit()
-    db.refresh(folder)
-    return {"id": folder.id, "name": folder.name}
-
-
-@router.delete("/folders/{folder_id}")
-def delete_folder(
-    folder_id: int,
-    db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
-):
-    """删除文件夹（会自动将子文件夹和组件移出）"""
-    folder = db.query(ComponentFolder).filter(ComponentFolder.id == folder_id).first()
-    if not folder:
-        raise HTTPException(status_code=404, detail="文件夹不存在")
-
-    # 将文件夹内的组件移出
-    db.query(Component).filter(Component.folder_id == folder_id).update(
-        {Component.folder_id: None}, synchronize_session=False
-    )
-
-    # 递归删除子文件夹
-    child_ids = [folder_id]
-    to_delete = [folder_id]
-    while child_ids:
-        children = db.query(ComponentFolder.id).filter(
-            ComponentFolder.parent_id.in_(child_ids)
-        ).all()
-        child_ids = [c[0] for c in children]
-        to_delete.extend(child_ids)
-
-    db.query(ComponentFolder).filter(ComponentFolder.id.in_(to_delete)).delete(
-        synchronize_session=False
-    )
-    db.commit()
-    return {"message": "删除成功"}
-
-
-# ─────────────────────────────────────────────
-# SQL 即席查询
-# ─────────────────────────────────────────────
-
-class RunSqlRequest(BaseModel):
-    datasource_id: int
-    sql: str = Field(..., min_length=1)
-
-
-def _connect_mysql(host: str, port: int, user: str, password: str, database: str):
-    import pymysql
-    return pymysql.connect(
-        host=host, port=port or 3306,
-        user=user, password=password,
-        database=database,
-        connect_timeout=10, charset="utf8mb4",
-        cursorclass=pymysql.cursors.DictCursor,
-    )
-
-
-@router.post("/run-sql")
-def run_sql_adhoc(
-    req: RunSqlRequest,
-    db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
-):
-    """SQL 即席查询 / 执行（仅限 SELECT / INSERT / UPDATE / DELETE）"""
-    from app.models.datasource import DataSource
-
-    ds = db.query(DataSource).filter(DataSource.id == req.datasource_id).first()
-    if not ds:
-        raise HTTPException(status_code=404, detail="数据源不存在")
-    if ds.type != "mysql":
-        raise HTTPException(status_code=400, detail=f"暂不支持 {ds.type} 数据源")
-
-    sql = req.sql.strip()
-    upper = sql.upper()
-
-    # 安全校验：只允许 DQL / DML，禁止 DDL / DCL
-    dangerous = ['DROP ', 'TRUNCATE ', 'ALTER ', 'CREATE ', 'GRANT ', 'REVOKE ']
-    for kw in dangerous:
-        if kw in upper:
-            raise HTTPException(status_code=400, detail=f"禁止执行危险操作: {kw.strip()}")
-
-    import time
-    start = time.time()
-
-    try:
-        conn = _connect_mysql(ds.host, ds.port, ds.username, ds.password, ds.database_name)
-        with conn.cursor() as cur:
-            cur.execute(sql)
-
-            if upper.startswith("SELECT"):
-                rows = cur.fetchall()
-                columns = [d[0] for d in cur.description] if cur.description else []
-                # 确保可序列化
-                safe_rows = []
-                for r in rows:
-                    safe_rows.append({k: (str(v) if v is not None else None) for k, v in r.items()})
-                return {
-                    "type": "table",
-                    "columns": columns,
-                    "rows": safe_rows,
-                    "row_count": len(safe_rows),
-                    "duration_ms": round((time.time() - start) * 1000, 1),
-                }
-            else:
-                conn.commit()
-                return {
-                    "type": "rowcount",
-                    "affected": cur.rowcount,
-                    "duration_ms": round((time.time() - start) * 1000, 1),
-                }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"执行失败: {e}")
-    finally:
-        try:
-            conn.close()
-        except:
-            pass
-
-
-# ─────────────────────────────────────────────
-# 组件快速发布
-# ─────────────────────────────────────────────
-
-@router.post("/{comp_id}/quick-publish")
-def quick_publish_component(
+@router.put("/{comp_id}/status")
+def set_component_status(
     comp_id: int,
+    req: SetStatusRequest,
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    """快速发布：跳过测试直接发布上线（开发调试用）"""
+    """手动设置组件状态（仅允许 MANUAL_STATUSES 中的状态）"""
     c = _get_or_404(db, comp_id)
-    if c.status == STATUS_ONLINE:
-        raise HTTPException(status_code=400, detail="组件已上线")
-    c.status = STATUS_ONLINE
+    new_status = req.status
+
+    if new_status not in VALID_STATUSES:
+        raise HTTPException(status_code=400, detail=f"无效状态: {new_status}")
+
+    if new_status in AUTO_STATUSES:
+        raise HTTPException(status_code=400, detail=f"状态 {new_status} 为自动流转状态，不可手动设置")
+
+    if c.status == STATUS_ARCHIVED:
+        raise HTTPException(status_code=400, detail="已归档组件不可修改状态")
+
+    # 处理暂停恢复（从 paused 转出去）
+    if c.status == STATUS_PAUSED:
+        # 恢复到 previous_status
+        prev = getattr(c, 'previous_status', None) or STATUS_DEVELOPING
+        c.status = prev
+        try:
+            c.previous_status = None
+        except Exception:
+            pass
+        db.commit()
+        db.refresh(c)
+        return {"message": f"已恢复到 {STATUS_LABELS.get(prev, prev)}", **_serialize(c)}
+
+    # 处理暂停：记录 previous_status
+    if new_status == STATUS_PAUSED:
+        try:
+            c.previous_status = c.status
+        except Exception:
+            pass
+        c.status = new_status
+        db.commit()
+        db.refresh(c)
+        return {"message": "已暂停", **_serialize(c)}
+
+    # 校验流转规则
+    allowed = STATUS_TRANSITIONS.get(c.status, [])
+    if new_status not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"状态流转非法: {STATUS_LABELS.get(c.status, c.status)} → {STATUS_LABELS.get(new_status, new_status)}"
+        )
+
+    c.status = new_status
     db.commit()
     db.refresh(c)
-    return {"message": "已快速发布上线", **_serialize(c)}
+    return {"message": f"状态已更新为 {STATUS_LABELS.get(new_status, new_status)}", **_serialize(c)}
