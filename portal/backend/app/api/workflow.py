@@ -249,6 +249,31 @@ def create_workflow(
     return _serialize(w, db)
 
 
+@router.get("/scheduled")
+def list_scheduled_workflows(
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """返回所有配置了 cron 的工作流（调度任务页面用）"""
+    q = db.query(Workflow).filter(
+        Workflow.cron_expression.isnot(None),
+        Workflow.cron_expression != "",
+    ).order_by(Workflow.id.desc())
+    items = q.all()
+    result = []
+    for w in items:
+        item = _serialize(w, db)
+        try:
+            from croniter import croniter
+            from datetime import datetime
+            cron = croniter(w.cron_expression, datetime.now())
+            item["next_fire_time"] = str(cron.get_next(datetime))
+        except Exception:
+            item["next_fire_time"] = None
+        result.append(item)
+    return {"items": result, "total": len(result)}
+
+
 @router.get("/{wf_id}")
 def get_workflow(
     wf_id: int,
@@ -494,9 +519,6 @@ async def schedule_offline(
     db.refresh(w)
     return {"message": "调度已关闭", **_serialize(w, db)}
 
-
-# ===== 调度任务列表 =====
-@router.get("/scheduled")
 def list_scheduled_workflows(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),

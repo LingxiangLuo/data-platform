@@ -64,11 +64,11 @@ async function loadInstances() {
     const res: any = await getDSInstances(params)
     instances.value = (res.list || res.totalList || res.data?.list || []).map((item: any) => ({
       id: item.id,
-      name: item.name,
+      name: item.name || `工作流-${item.processDefinitionCode || item.id}`,
       state: item.state,
       startTime: item.startTime ? formatTime(item.startTime) : '-',
       endTime: item.endTime ? formatTime(item.endTime) : '-',
-      duration: item.duration ? formatDuration(item.duration) : '-',
+      duration: item.duration != null ? formatDuration(item.duration) : '-',
     }))
   } catch (e: any) {
     Message.error('加载运行记录失败：' + (e?.response?.data?.detail || e?.message || '未知错误'))
@@ -95,13 +95,15 @@ async function toggleExpand(id: number) {
   taskLoading.value[id] = true
   try {
     const res: any = await getDSInstanceTasks(id)
-    taskMap.value[id] = (res.taskList || res.list || res || []).map((t: any) => ({
+    // DS 返回直接是数组
+    const taskList = Array.isArray(res) ? res : (res.taskList || res.list || [])
+    taskMap.value[id] = taskList.map((t: any) => ({
       id: t.id,
       name: t.name,
       state: t.state,
       startTime: t.startTime ? formatTime(t.startTime) : '-',
       endTime: t.endTime ? formatTime(t.endTime) : '-',
-      duration: t.duration ? formatDuration(t.duration) : '-',
+      duration: t.duration != null ? formatDuration(t.duration) : '-',
     }))
   } catch {
     taskMap.value[id] = []
@@ -156,9 +158,9 @@ function formatTime(ts: string | number): string {
   return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-function formatDuration(ms: number): string {
-  if (!ms || ms < 0) return '-'
-  const s = Math.floor(ms / 1000)
+function formatDuration(s: number): string {
+  // DS 返回的 duration 单位是秒
+  if (s == null || s < 0) return '-'
   if (s < 60) return `${s}s`
   const m = Math.floor(s / 60)
   if (m < 60) return `${m}m${s % 60}s`
