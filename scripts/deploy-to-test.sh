@@ -38,6 +38,7 @@ rsync -avz --delete \
     --exclude='*.pyc' \
     --exclude='portal/frontend/dist' \
     --exclude='portal/backend/.venv' \
+    --exclude='.env' \
     -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" \
     "$PROJECT_DIR/" \
     "$TEST_USER@$TEST_HOST:$TEST_DIR/"
