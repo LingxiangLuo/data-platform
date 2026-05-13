@@ -76,12 +76,8 @@
               </a-space>
             </template>
           </a-table-column>
-          <a-table-column title="描述" data-index="description" :width="200" :ellipsis="true" :tooltip="true">
-            <template #cell="{ record }">
-              <span class="text-muted cell-ellipsis">{{ record.description || '—' }}</span>
-            </template>
-          </a-table-column>
-          <a-table-column title="更新时间" :width="160">
+          <a-table-column title="描述" data-index="description" :width="180" :ellipsis="true" :tooltip="true" />
+          <a-table-column title="更新时间" :width="150">
             <template #cell="{ record }">
               <span class="mono text-muted">{{ formatTime(record.updated_at) }}</span>
             </template>
