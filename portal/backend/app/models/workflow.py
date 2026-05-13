@@ -11,6 +11,7 @@ class Workflow(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
     description = Column(Text)
+    tags = Column(JSON, nullable=True)  # 标签列表，如 ["ODS同步", "日报"]
     # 旧版线性步骤（兼容，新版优先使用 dag_json）
     steps_json = Column(JSON, nullable=False, default=list)
     # DAG 结构: {nodes: [{id, component_id, name, position:{x,y}, skip}], edges: [{id, source, target}]}

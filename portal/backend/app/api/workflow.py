@@ -53,6 +53,7 @@ class WorkflowCreate(BaseModel):
     steps: List[WorkflowStep] = Field(default_factory=list)
     dag: Optional[DagPayload] = None
     cron_expression: Optional[str] = None
+    tags: Optional[List[str]] = None
 
 class WorkflowUpdate(BaseModel):
     name: Optional[str] = None
@@ -60,6 +61,7 @@ class WorkflowUpdate(BaseModel):
     steps: Optional[List[WorkflowStep]] = None
     dag: Optional[DagPayload] = None
     cron_expression: Optional[str] = None
+    tags: Optional[List[str]] = None
 
 
 def _serialize(w: Workflow, db: Session) -> dict:
@@ -87,6 +89,7 @@ def _serialize(w: Workflow, db: Session) -> dict:
         "id": w.id,
         "name": w.name,
         "description": w.description,
+        "tags": w.tags or [],
         "steps": enriched_steps,
         "dag": w.dag_json,
         "cron_expression": w.cron_expression,
@@ -207,6 +210,7 @@ def list_workflows(
     page_size: int = 20,
     keyword: Optional[str] = None,
     status: Optional[str] = None,
+    tag: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
@@ -215,9 +219,16 @@ def list_workflows(
         q = q.filter(Workflow.name.contains(keyword))
     if status:
         q = q.filter(Workflow.status == status)
+    if tag:
+        q = q.filter(Workflow.tags.contains(f'"{tag}"'))
     total = q.count()
     items = q.order_by(Workflow.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
-    return {"total": total, "items": [_serialize(w, db) for w in items]}
+    # 收集所有已使用的标签
+    all_tags = set()
+    for w in db.query(Workflow.tags).filter(Workflow.tags.isnot(None)).all():
+        if w.tags:
+            all_tags.update(w.tags)
+    return {"total": total, "items": [_serialize(w, db) for w in items], "all_tags": sorted(all_tags)}
 
 
 @router.post("")
@@ -235,6 +246,7 @@ def create_workflow(
     w = Workflow(
         name=req.name,
         description=req.description,
+        tags=req.tags or [],
         steps_json=steps_data,
         dag_json=dag_data,
         cron_expression=req.cron_expression,
@@ -302,6 +314,8 @@ def update_workflow(
         w.name = updates["name"]
     if "description" in updates:
         w.description = updates["description"]
+    if "tags" in updates:
+        w.tags = updates["tags"] or []
     if "cron_expression" in updates:
         w.cron_expression = updates["cron_expression"]
     if "steps" in updates:

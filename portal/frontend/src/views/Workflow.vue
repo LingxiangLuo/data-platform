@@ -30,6 +30,13 @@
       <div class="tab-item" :class="{ active: statusFilter === 'offline' }" @click="setStatus('offline')">已下线</div>
     </div>
 
+    <!-- 标签筛选 -->
+    <div v-if="allTags.length" class="tag-filter-bar">
+      <span class="tag-filter-label">标签：</span>
+      <span class="tag-chip" :class="{ active: tagFilter === '' }" @click="setTag('')">全部</span>
+      <span v-for="t in allTags" :key="t" class="tag-chip" :class="{ active: tagFilter === t }" @click="setTag(t)">{{ t }}</span>
+    </div>
+
     <!-- 表格 -->
     <div class="glass-card table-card">
       <a-table :data="items" :loading="loading" :bordered="false" :pagination="false" stripe>
@@ -59,6 +66,14 @@
             <template #cell="{ record }">
               <a-tag v-if="record.schedule_status === 'ONLINE'" color="green" size="small">运行中</a-tag>
               <a-tag v-else color="gray" size="small">已停止</a-tag>
+            </template>
+          </a-table-column>
+          <a-table-column title="标签" :width="160">
+            <template #cell="{ record }">
+              <a-space :size="4" wrap>
+                <a-tag v-for="t in (record.tags || [])" :key="t" size="small" color="arcoblue">{{ t }}</a-tag>
+                <span v-if="!record.tags?.length" class="text-muted">—</span>
+              </a-space>
             </template>
           </a-table-column>
           <a-table-column title="描述" data-index="description">
@@ -211,6 +226,7 @@ interface Workflow {
   id: number
   name: string
   description?: string
+  tags?: string[]
   steps: Step[]
   cron_expression?: string
   schedule_status: string
@@ -230,6 +246,8 @@ const page = ref(1)
 const pageSize = ref(20)
 const searchVal = ref('')
 const statusFilter = ref('')
+const tagFilter = ref('')
+const allTags = ref<string[]>([])
 
 const editorVisible = ref(false)
 const editorTitle = ref('新建工作流')
@@ -282,6 +300,7 @@ function canPublish(w: Workflow) { return w.status === 'tested' }
 function canDelete(w: Workflow) { return w.status === 'draft' || w.status === 'offline' }
 
 function setStatus(s: string) { statusFilter.value = s; loadData() }
+function setTag(t: string) { tagFilter.value = t; loadData() }
 
 // ===== 数据加载 =====
 async function loadData() {
@@ -293,9 +312,11 @@ async function loadData() {
     }
     if (searchVal.value) params.keyword = searchVal.value
     if (statusFilter.value) params.status = statusFilter.value
+    if (tagFilter.value) params.tag = tagFilter.value
     const res: any = await getWorkflows(params)
     items.value = res?.items || []
     total.value = res?.total || 0
+    if (res?.all_tags) allTags.value = res.all_tags
   } catch {
     items.value = []
     total.value = 0
@@ -526,7 +547,7 @@ onMounted(() => {
 .page-title { margin: 0; font-size: 18px; font-weight: 600; color: #1D2129; }
 .page-desc { margin: 4px 0 0; font-size: 13px; color: #86909C; }
 
-.filter-tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+.filter-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
 .tab-item {
   padding: 6px 16px; border-radius: 6px; font-size: 13px; cursor: pointer;
   color: #4E5969; background: #F7F8FA; transition: all 0.15s;
@@ -534,6 +555,11 @@ onMounted(() => {
 .tab-item:hover { background: #EFF4FF; color: #2B5AED; }
 .tab-item.active { background: #2B5AED; color: #FFFFFF; }
 .tab-item.online.active { background: #00B42A; }
+.tag-filter-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+.tag-filter-label { font-size: 12px; color: #86909c; }
+.tag-chip { padding: 3px 10px; border-radius: 10px; font-size: 12px; cursor: pointer; background: #f2f3f5; color: #4e5969; transition: all 0.15s; }
+.tag-chip:hover { background: #e8f3ff; color: #165dff; }
+.tag-chip.active { background: #165dff; color: #fff; }
 
 .table-card { padding: 0; overflow: hidden; }
 .wf-name { font-weight: 500; color: #1D2129; }
