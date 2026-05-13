@@ -85,13 +85,13 @@ const router = createRouter({
           path: 'data-assets',
           name: 'DataAssets',
           component: () => import('../views/DataAssets.vue'),
-          meta: { title: '数据表' },
+          meta: { title: '数据目录' },
         },
         {
           path: 'field-assets',
           name: 'FieldAssets',
           component: () => import('../views/FieldAssets.vue'),
-          meta: { title: '字段资产' },
+          meta: { title: '词根管理' },
         },
         {
           path: 'lineage',

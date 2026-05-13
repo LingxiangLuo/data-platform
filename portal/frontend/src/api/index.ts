@@ -66,6 +66,21 @@ export const deleteAlertRule = (id: number) => api.delete(`/alert-rules/${id}`)
 export const toggleAlertRule = (id: number) => api.patch(`/alert-rules/${id}/toggle`)
 export const testAlertNotify = (data: any) => api.post('/alert-rules/test-notify', data)
 
+// Word Roots (词根管理)
+export const getWordRoots = (params?: any) => api.get('/word-roots', { params })
+export const createWordRoot = (data: any) => api.post('/word-roots', data)
+export const updateWordRoot = (id: number, data: any) => api.put(`/word-roots/${id}`, data)
+export const deleteWordRoot = (id: number) => api.delete(`/word-roots/${id}`)
+export const importWordRoots = (file: File) => {
+  const fd = new FormData(); fd.append('file', file)
+  return api.post('/word-roots/import', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+}
+export const suggestNaming = (q: string) => api.get('/word-roots/suggest', { params: { q } })
+
+// Metadata (数据资产)
+export const getMetadataStats = () => api.get('/metadata/stats')
+export const getMetadataLineage = () => api.get('/metadata/lineage')
+
 // Projects (同步任务分组)
 export const getProjects = (params?: any) => api.get('/projects', { params })
 export const getProject = (id: number) => api.get(`/projects/${id}`)
