@@ -1,215 +1,272 @@
-<script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { Message } from '@arco-design/web-vue'
-import { getDSInstances, rerunDSInstance } from '../api'
-
-interface AlertItem {
-  id: number
-  name: string
-  state: string
-  startTime: string
-  duration: string
-  handled: boolean
-}
-
-const router = useRouter()
-const items = ref<AlertItem[]>([])
-const loading = ref(false)
-const filter = ref('')
-
-const FILTER_TABS = [
-  { label: '全部异常', value: '' },
-  { label: '运行失败', value: 'FAILURE' },
-  { label: '已终止', value: 'KILL' },
-  { label: '停止', value: 'STOP' },
-]
-
-const STATE_MAP: Record<string, { text: string; color: string; bg: string; icon: string }> = {
-  FAILURE: { text: '运行失败', color: '#f53f3f', bg: '#ffece8', icon: '✕' },
-  KILL:    { text: '已终止',  color: '#ff7d00', bg: '#fff7e8', icon: '⊘' },
-  STOP:    { text: '已停止',  color: '#86909c', bg: '#f2f3f5', icon: '■' },
-}
-
-const filtered = computed(() =>
-  filter.value ? items.value.filter(i => i.state === filter.value) : items.value
-)
-
-const kpi = computed(() => ({
-  total: items.value.length,
-  failure: items.value.filter(i => i.state === 'FAILURE').length,
-  other: items.value.filter(i => i.state !== 'FAILURE').length,
-}))
-
-onMounted(() => loadAlerts())
-
-async function loadAlerts() {
-  loading.value = true
-  try {
-    // 拉取失败/终止/停止的实例
-    const [r1, r2, r3] = await Promise.all([
-      getDSInstances({ pageNo: 1, pageSize: 30, stateType: 'FAILURE' }) as any,
-      getDSInstances({ pageNo: 1, pageSize: 10, stateType: 'KILL' }) as any,
-      getDSInstances({ pageNo: 1, pageSize: 10, stateType: 'STOP' }) as any,
-    ])
-    const all = [
-      ...(r1.list || []),
-      ...(r2.list || []),
-      ...(r3.list || []),
-    ]
-    // 按时间倒序
-    all.sort((a: any, b: any) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())
-    items.value = all.map((item: any) => ({
-      id: item.id,
-      name: item.name || `工作流-${item.processDefinitionCode || item.id}`,
-      state: item.state,
-      startTime: item.startTime ? formatTime(item.startTime) : '-',
-      duration: item.duration != null ? formatDuration(item.duration) : '-',
-      handled: false,
-    }))
-  } catch (e: any) {
-    Message.error('加载失败：' + (e?.message || '未知错误'))
-  } finally { loading.value = false }
-}
-
-async function handleRerun(id: number) {
-  try {
-    await rerunDSInstance(id)
-    Message.success('已触发重跑')
-    const item = items.value.find(i => i.id === id)
-    if (item) item.handled = true
-  } catch (e: any) {
-    Message.error(e?.response?.data?.detail || '重跑失败')
-  }
-}
-
-function goDetail(id: number) {
-  router.push(`/ops/instances/${id}`)
-}
-
-function formatTime(ts: string): string {
-  const d = new Date(ts)
-  if (isNaN(d.getTime())) return ts
-  return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-}
-
-function formatDuration(s: number): string {
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  return m < 60 ? `${m}m${s % 60}s` : `${Math.floor(m / 60)}h${m % 60}m`
-}
-</script>
-
 <template>
-  <div class="alert-page">
-    <!-- KPI -->
-    <div class="kpi-row">
-      <div class="kpi-card kpi-card--fail">
-        <div class="kpi-value">{{ kpi.total }}</div>
-        <div class="kpi-label">近期异常</div>
+  <div class="page">
+    <div class="glass-card page-header">
+      <div>
+        <h3 class="page-title">监控规则</h3>
+        <p class="page-desc">配置告警规则，工作流异常时自动通知到飞书或邮箱</p>
       </div>
-      <div class="kpi-card kpi-card--fail">
-        <div class="kpi-value">{{ kpi.failure }}</div>
-        <div class="kpi-label">运行失败</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-value">{{ kpi.other }}</div>
-        <div class="kpi-label">其他异常</div>
-      </div>
-      <div class="kpi-card kpi-card--ok">
-        <div class="kpi-value">{{ items.filter(i => i.handled).length }}</div>
-        <div class="kpi-label">已处理</div>
-      </div>
+      <a-button type="primary" @click="openCreate">
+        <template #icon><icon-plus /></template>
+        新建规则
+      </a-button>
     </div>
 
-    <!-- 筛选 + 刷新 -->
-    <div class="filter-bar">
-      <div class="filter-tabs">
-        <span v-for="tab in FILTER_TABS" :key="tab.value"
-          class="filter-tab" :class="{ active: filter === tab.value }"
-          @click="filter = tab.value">
-          {{ tab.label }}
-          <span v-if="tab.value === 'FAILURE'" class="tab-count">{{ kpi.failure }}</span>
-        </span>
-      </div>
-      <a-button size="mini" @click="loadAlerts" :loading="loading">刷新</a-button>
-    </div>
-
-    <!-- 告警列表 -->
-    <div class="alert-list">
-      <div v-if="loading && !filtered.length" class="list-empty"><a-spin /></div>
-      <div v-else-if="!filtered.length" class="list-empty">
-        <a-empty description="暂无异常记录" />
-      </div>
-      <div v-else class="alert-cards">
-        <div v-for="item in filtered" :key="item.id"
-          class="alert-card" :class="{ 'alert-card--handled': item.handled }">
-          <div class="alert-card__left">
-            <span class="alert-icon" :style="{ color: STATE_MAP[item.state]?.color || '#86909c' }">
-              {{ STATE_MAP[item.state]?.icon || '!' }}
-            </span>
-          </div>
-          <div class="alert-card__body">
-            <div class="alert-name">{{ item.name }}</div>
-            <div class="alert-meta">
-              <span class="alert-state-badge"
-                :style="{ color: STATE_MAP[item.state]?.color, background: STATE_MAP[item.state]?.bg }">
-                {{ STATE_MAP[item.state]?.text || item.state }}
+    <div class="glass-card table-card">
+      <a-table :data="rules" :loading="loading" :bordered="false" :pagination="false" stripe>
+        <template #columns>
+          <a-table-column title="规则名称" data-index="name" :width="180" />
+          <a-table-column title="监控对象" :width="160">
+            <template #cell="{ record }">
+              <span v-if="record.target_type === 'all'" class="text-muted">所有工作流</span>
+              <span v-else>{{ record.target_name || `工作流#${record.target_id}` }}</span>
+            </template>
+          </a-table-column>
+          <a-table-column title="触发条件" :width="160">
+            <template #cell="{ record }">
+              <a-tag :color="triggerColor(record.trigger_type)" size="small">{{ triggerLabel(record) }}</a-tag>
+            </template>
+          </a-table-column>
+          <a-table-column title="通知方式" :width="120">
+            <template #cell="{ record }">
+              <span class="notify-badge">
+                <span class="notify-icon">{{ record.notify_type === 'feishu_webhook' ? '🔔' : '📧' }}</span>
+                {{ record.notify_type === 'feishu_webhook' ? '飞书' : '邮件' }}
               </span>
-              <span class="alert-time">{{ item.startTime }}</span>
-              <span class="alert-duration">耗时 {{ item.duration }}</span>
-              <span v-if="item.handled" class="alert-handled">✓ 已处理</span>
-            </div>
+            </template>
+          </a-table-column>
+          <a-table-column title="状态" :width="80">
+            <template #cell="{ record }">
+              <a-switch :model-value="record.enabled" size="small" @change="handleToggle(record)" />
+            </template>
+          </a-table-column>
+          <a-table-column title="操作" :width="160">
+            <template #cell="{ record }">
+              <a-space :size="4">
+                <a-button type="text" size="mini" @click="openEdit(record)">编辑</a-button>
+                <a-button type="text" size="mini" @click="handleTest(record)">测试</a-button>
+                <a-button type="text" size="mini" status="danger" @click="handleDelete(record)">删除</a-button>
+              </a-space>
+            </template>
+          </a-table-column>
+        </template>
+        <template #empty>
+          <div class="empty-state">
+            <p>暂无监控规则</p>
+            <p class="text-muted">点击「新建规则」配置工作流异常告警</p>
           </div>
-          <div class="alert-card__actions">
-            <a-button type="text" size="mini" @click="goDetail(item.id)">查看详情</a-button>
-            <a-button type="outline" size="mini" status="danger"
-              @click="handleRerun(item.id)" :disabled="item.handled">
-              重跑
-            </a-button>
-          </div>
-        </div>
-      </div>
+        </template>
+      </a-table>
     </div>
+
+    <!-- 新建/编辑模态框 -->
+    <a-modal v-model:visible="modalVisible" :title="editingId ? '编辑规则' : '新建规则'" :width="560" @ok="handleSave" :unmount-on-close="true">
+      <a-form :model="form" layout="vertical">
+        <a-form-item label="规则名称" required>
+          <a-input v-model="form.name" placeholder="例如：ODS同步失败告警" />
+        </a-form-item>
+        <a-row :gutter="16">
+          <a-col :span="12">
+            <a-form-item label="监控对象">
+              <a-select v-model="form.target_type">
+                <a-option value="all">所有工作流</a-option>
+                <a-option value="workflow">指定工作流</a-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+          <a-col :span="12" v-if="form.target_type === 'workflow'">
+            <a-form-item label="选择工作流">
+              <a-select v-model="form.target_id" placeholder="选择" allow-search>
+                <a-option v-for="w in workflows" :key="w.id" :value="w.id">{{ w.name }}</a-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+        </a-row>
+        <a-row :gutter="16">
+          <a-col :span="12">
+            <a-form-item label="触发条件">
+              <a-select v-model="form.trigger_type">
+                <a-option value="failure">运行失败</a-option>
+                <a-option value="timeout">运行超时</a-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+          <a-col :span="12" v-if="form.trigger_type === 'timeout'">
+            <a-form-item label="超时阈值（秒）">
+              <a-input-number v-model="form.trigger_value" :min="60" :step="60" placeholder="600" />
+            </a-form-item>
+          </a-col>
+        </a-row>
+        <a-row :gutter="16">
+          <a-col :span="12">
+            <a-form-item label="通知方式">
+              <a-select v-model="form.notify_type">
+                <a-option value="feishu_webhook">飞书机器人</a-option>
+                <a-option value="email">邮件</a-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+          <a-col :span="12">
+            <a-form-item :label="form.notify_type === 'feishu_webhook' ? 'Webhook URL' : '邮箱地址'">
+              <a-input v-model="notifyValue" :placeholder="form.notify_type === 'feishu_webhook' ? 'https://open.feishu.cn/open-apis/bot/v2/hook/...' : 'alert@example.com'" />
+            </a-form-item>
+          </a-col>
+        </a-row>
+      </a-form>
+    </a-modal>
   </div>
 </template>
 
-<style scoped>
-.alert-page { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { Message, Modal } from '@arco-design/web-vue'
+import { IconPlus } from '@arco-design/web-vue/es/icon'
+import {
+  getAlertRules, createAlertRule, updateAlertRule, deleteAlertRule,
+  toggleAlertRule, testAlertNotify, getWorkflows,
+} from '../api'
 
-.kpi-row { display: flex; gap: 12px; }
-.kpi-card { flex: 1; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px 20px; }
-.kpi-card--fail { border-left: 3px solid #f53f3f; }
-.kpi-card--ok   { border-left: 3px solid #00b42a; }
-.kpi-value { font-size: 28px; font-weight: 700; color: #1d2129; }
-.kpi-label { font-size: 12px; color: #86909c; margin-top: 4px; }
-
-.filter-bar { display: flex; align-items: center; justify-content: space-between; }
-.filter-tabs { display: flex; gap: 4px; }
-.filter-tab { padding: 5px 14px; font-size: 13px; cursor: pointer; border-radius: 4px; color: #4e5969; transition: all 0.15s; display: flex; align-items: center; gap: 5px; }
-.filter-tab:hover { background: #f0f5ff; color: #165dff; }
-.filter-tab.active { background: #165dff; color: #fff; }
-.tab-count { background: rgba(255,255,255,0.3); border-radius: 8px; padding: 0 5px; font-size: 11px; }
-.filter-tab:not(.active) .tab-count { background: #f2f3f5; color: #86909c; }
-
-.list-empty { display: flex; align-items: center; justify-content: center; height: 200px; }
-.alert-cards { display: flex; flex-direction: column; gap: 10px; }
-
-.alert-card {
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
-  padding: 16px; display: flex; align-items: center; gap: 16px;
-  transition: box-shadow 0.15s;
+interface Rule {
+  id: number
+  name: string
+  target_type: string
+  target_id?: number
+  target_name?: string
+  trigger_type: string
+  trigger_value?: number
+  notify_type: string
+  notify_config: any
+  enabled: boolean
 }
-.alert-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
-.alert-card--handled { opacity: 0.6; }
-.alert-card__left { flex-shrink: 0; }
-.alert-icon { font-size: 22px; font-weight: 700; }
-.alert-card__body { flex: 1; min-width: 0; }
-.alert-name { font-size: 15px; font-weight: 600; color: #1d2129; margin-bottom: 6px; }
-.alert-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.alert-state-badge { padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 500; }
-.alert-time { font-size: 12px; color: #86909c; }
-.alert-duration { font-size: 12px; color: #86909c; }
-.alert-handled { font-size: 12px; color: #00b42a; font-weight: 500; }
-.alert-card__actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+const loading = ref(false)
+const rules = ref<Rule[]>([])
+const workflows = ref<any[]>([])
+const modalVisible = ref(false)
+const editingId = ref<number | null>(null)
+const notifyValue = ref('')
+
+const form = ref({
+  name: '',
+  target_type: 'all',
+  target_id: undefined as number | undefined,
+  trigger_type: 'failure',
+  trigger_value: 600,
+  notify_type: 'feishu_webhook',
+})
+
+function triggerColor(t: string) {
+  return ({ failure: 'red', timeout: 'orange', consecutive_failure: 'purple' } as any)[t] || 'gray'
+}
+function triggerLabel(r: Rule) {
+  if (r.trigger_type === 'failure') return '运行失败'
+  if (r.trigger_type === 'timeout') return `超时 > ${r.trigger_value || 0}s`
+  if (r.trigger_type === 'consecutive_failure') return `连续失败 ${r.trigger_value} 次`
+  return r.trigger_type
+}
+
+async function loadData() {
+  loading.value = true
+  try {
+    const res: any = await getAlertRules()
+    rules.value = res?.items || []
+  } catch { rules.value = [] }
+  loading.value = false
+}
+
+async function loadWorkflows() {
+  try {
+    const res: any = await getWorkflows({ page: 1, page_size: 200 })
+    workflows.value = res?.items || []
+  } catch {}
+}
+
+function openCreate() {
+  editingId.value = null
+  form.value = { name: '', target_type: 'all', target_id: undefined, trigger_type: 'failure', trigger_value: 600, notify_type: 'feishu_webhook' }
+  notifyValue.value = ''
+  modalVisible.value = true
+}
+
+function openEdit(r: Rule) {
+  editingId.value = r.id
+  form.value = {
+    name: r.name,
+    target_type: r.target_type,
+    target_id: r.target_id,
+    trigger_type: r.trigger_type,
+    trigger_value: r.trigger_value || 600,
+    notify_type: r.notify_type,
+  }
+  const cfg = r.notify_config || {}
+  notifyValue.value = cfg.webhook_url || cfg.email || ''
+  modalVisible.value = true
+}
+
+async function handleSave() {
+  if (!form.value.name.trim()) { Message.warning('请填写规则名称'); return }
+  if (!notifyValue.value.trim()) { Message.warning('请填写通知地址'); return }
+
+  const notify_config = form.value.notify_type === 'feishu_webhook'
+    ? { webhook_url: notifyValue.value.trim() }
+    : { email: notifyValue.value.trim() }
+
+  const payload = { ...form.value, notify_config }
+  try {
+    if (editingId.value) {
+      await updateAlertRule(editingId.value, payload)
+      Message.success('已更新')
+    } else {
+      await createAlertRule(payload)
+      Message.success('已创建')
+    }
+    modalVisible.value = false
+    loadData()
+  } catch {}
+}
+
+async function handleToggle(r: Rule) {
+  try {
+    await toggleAlertRule(r.id)
+    loadData()
+  } catch {}
+}
+
+async function handleTest(r: Rule) {
+  try {
+    await testAlertNotify({ notify_type: r.notify_type, notify_config: r.notify_config })
+    Message.success('测试通知已发送，请检查接收端')
+  } catch (e: any) {
+    Message.error(e?.response?.data?.detail || '发送失败')
+  }
+}
+
+function handleDelete(r: Rule) {
+  Modal.confirm({
+    title: '删除规则',
+    content: `确认删除「${r.name}」?`,
+    onOk: async () => {
+      try { await deleteAlertRule(r.id); Message.success('已删除'); loadData() } catch {}
+    },
+  })
+}
+
+onMounted(() => { loadData(); loadWorkflows() })
+</script>
+
+<style scoped>
+.page { animation: fadeIn 0.3s ease-out; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+.page-header { padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.page-title { margin: 0; font-size: 18px; font-weight: 600; color: #1D2129; }
+.page-desc { margin: 4px 0 0; font-size: 13px; color: #86909C; }
+
+.table-card { padding: 0; overflow: auto; }
+.text-muted { color: #86909C; }
+.empty-state { padding: 40px 0; text-align: center; }
+
+.notify-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+.notify-icon { font-size: 14px; }
+
+:deep(.arco-table-th) { background: #FAFBFC !important; }
 </style>
