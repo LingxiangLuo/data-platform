@@ -149,10 +149,10 @@ def preview_table(
             r.close()
             return {"datasource_id": ds.id, "table": table, "columns": ["key", "value"], "rows": safe_rows, "count": len(safe_rows)}
 
-        # 其他 SQL 数据库统一用 SQLAlchemy
+        # 其他 SQL 数据库用 SQLAlchemy
         connect_args = {"connect_timeout": 10} if t in ("mysql", "postgresql") else {}
         engine = sa.create_engine(sqlalchemy_url(ds), pool_pre_ping=True, connect_args=connect_args)
-        # MySQL / PostgreSQL / ClickHouse: LIMIT n; SQLServer: TOP n; Oracle: FETCH FIRST n ROWS ONLY
+        # MySQL / ClickHouse: LIMIT n; SQLServer: TOP n; Oracle: FETCH FIRST n ROWS ONLY
         if t == "sqlserver":
             query = f"SELECT TOP {limit} * FROM [{table}]"
         elif t == "oracle":
@@ -160,13 +160,22 @@ def preview_table(
         elif t == "clickhouse":
             query = f"SELECT * FROM `{table}` LIMIT {limit}"
         elif t == "postgresql":
-            query = f'SELECT * FROM "{table}" LIMIT {limit}'
+            # PG 用 psycopg2 直接连接，search_path 已在 _connect 中设置
+            import psycopg2.extras
+            conn = _connect(ds)
+            try:
+                cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                cur.execute(f'SELECT * FROM "{table}" LIMIT %s', (limit,))
+                rows = cur.fetchall()
+                columns = list(rows[0].keys()) if rows else [desc[0] for desc in cur.description] if cur.description else []
+            finally:
+                conn.close()
+            safe_rows = [{k: (str(v) if v is not None else None) for k, v in r.items()} for r in rows]
+            return {"datasource_id": ds.id, "table": table, "columns": columns, "rows": safe_rows, "count": len(safe_rows)}
         else:
             query = f"SELECT * FROM `{table}` LIMIT {limit}"
 
         with engine.connect() as conn:
-            if t == "postgresql":
-                conn.execute(sa.text(f"SET search_path TO {ds.database_name}, public"))
             res = conn.execute(sa.text(query))
             columns = list(res.keys())
             raw_rows = res.fetchmany(limit)
