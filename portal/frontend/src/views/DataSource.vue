@@ -114,13 +114,13 @@ const form = reactive({
 const typeColors: Record<string, string> = { mysql: 'blue', sqlserver: 'purple', postgresql: 'cyan' }
 
 const columns = [
-  { title: '名称', dataIndex: 'name', width: 180 },
+  { title: '名称', dataIndex: 'name', width: 180, ellipsis: true, tooltip: true },
   { title: '类型', dataIndex: 'type', slotName: 'type', width: 100 },
-  { title: '主机', dataIndex: 'host', width: 160 },
-  { title: '数据库', dataIndex: 'database_name', width: 140 },
+  { title: '主机', dataIndex: 'host', width: 200, ellipsis: true, tooltip: true },
+  { title: '数据库', dataIndex: 'database_name', width: 140, ellipsis: true, tooltip: true },
   { title: '状态', dataIndex: 'status', slotName: 'status', width: 100 },
   { title: '创建时间', dataIndex: 'created_at', width: 170 },
-  { title: '操作', slotName: 'optional', width: 200, fixed: 'right' },
+  { title: '操作', slotName: 'optional', width: 200, fixed: 'right' as const },
 ]
 
 onMounted(() => loadData())

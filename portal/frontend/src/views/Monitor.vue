@@ -24,7 +24,7 @@
         <p class="service-desc">{{ svc.desc }}</p>
         <div class="service-meta">
           <span class="mono">端口: {{ svc.port }}</span>
-          <a-button v-if="svc.path" type="text" size="mini" @click="window.open(svc.path, '_blank')">访问</a-button>
+          <a-button v-if="svc.path" type="text" size="mini" @click="openPath(svc.path)">访问</a-button>
         </div>
       </div>
     </div>
@@ -179,6 +179,10 @@ async function loadDSMonitor() {
 function refreshAll() {
   loadServices()
   loadDSMonitor()
+}
+
+function openPath(path: string) {
+  window.open(path, '_blank')
 }
 
 onMounted(() => { loadServices(); loadDSMonitor() })

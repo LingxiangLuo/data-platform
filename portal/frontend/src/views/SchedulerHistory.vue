@@ -242,7 +242,7 @@ function stateInfo(state: string) {
           <!-- 时间线子任务 -->
           <div v-if="expandedKeys.includes(inst.id)" class="timeline-wrap">
             <div v-if="taskLoading[inst.id]" class="timeline-loading">
-              <a-spin size="small" /> 加载中...
+              <a-spin :size="16" /> 加载中...
             </div>
             <div v-else-if="!taskMap[inst.id]?.length" class="timeline-empty">暂无子任务</div>
             <div v-else class="timeline">

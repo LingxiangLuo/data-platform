@@ -163,7 +163,7 @@ function _ensureProvider() {
         const cols = await _fetchColumns(dsId, dotMatch[1])
         if (cols.length) {
           return {
-            suggestions: cols.map((c, i) => ({
+            suggestions: cols.map((c: any, i: any) => ({
               label: {
                 label:       c.name,
                 detail:      c.type ? `  ${c.type}` : '',
@@ -184,7 +184,7 @@ function _ensureProvider() {
         const tables = await _fetchTables(dsId)
         if (tables.length) {
           return {
-            suggestions: tables.map((t, i) => ({
+            suggestions: tables.map((t: any, i: any) => ({
               label: { label: t.name, description: t.comment },
               kind:       monaco.languages.CompletionItemKind.Module,
               insertText: t.name,
@@ -217,7 +217,7 @@ function _ensureProvider() {
 
       if (dsId) {
         const tables = await _fetchTables(dsId)
-        tables.forEach(t => suggestions.push({
+        tables.forEach((t: any) => suggestions.push({
           label:      { label: t.name, description: t.comment },
           kind:       monaco.languages.CompletionItemKind.Module,
           insertText: t.name,

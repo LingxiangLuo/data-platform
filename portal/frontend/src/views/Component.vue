@@ -56,9 +56,9 @@
               <a-tag :color="statusColor(record.status)" size="small">{{ statusLabel(record.status) }}</a-tag>
             </template>
           </a-table-column>
-          <a-table-column title="描述" data-index="description">
+          <a-table-column title="描述" data-index="description" :width="200" :ellipsis="true" :tooltip="true">
             <template #cell="{ record }">
-              <span class="text-muted">{{ record.description || '—' }}</span>
+              <span class="text-muted cell-ellipsis">{{ record.description || '—' }}</span>
             </template>
           </a-table-column>
           <a-table-column title="更新时间" :width="160">
@@ -103,7 +103,7 @@
       :title="editorTitle"
       :width="900"
       :ok-text="readonlyMode ? '关闭' : '保存'"
-      :cancel-button-props="readonlyMode ? { style: 'display:none' } : undefined"
+      :hide-cancel="readonlyMode"
       @ok="handleSave"
       @cancel="editorVisible = false"
       :unmount-on-close="true"
@@ -498,6 +498,7 @@ onMounted(() => {
 
 .mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
 .text-muted { color: #86909C; }
+.cell-ellipsis { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty-state { padding: 40px 0; text-align: center; }
 
 .pagination-wrap { padding: 16px 24px; display: flex; justify-content: flex-end; border-top: 1px solid #F2F3F5; }

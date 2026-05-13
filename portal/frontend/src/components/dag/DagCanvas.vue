@@ -130,7 +130,7 @@ defineExpose({ autoLayout })
 
 <template>
   <div class="dag-canvas" @drop="onDrop" @dragover="onDragOver">
-    <VueFlow v-model:nodes="flowNodes" v-model:edges="flowEdges" @node-context-menu="onNodeContextMenu" fit-view-on-init>
+    <VueFlow v-model:nodes="flowNodes" v-model:edges="flowEdges" @node-context-menu="(onNodeContextMenu as any)" fit-view-on-init>
       <template #node-component-node="nodeProps">
         <DagCustomNode :data="nodeProps.data" />
       </template>

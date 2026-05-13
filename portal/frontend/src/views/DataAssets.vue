@@ -148,7 +148,7 @@ import { IconRefresh, IconSearch, IconStorage } from '@arco-design/web-vue/es/ic
 import { getDatasources, getMetadataTables, getMetadataColumns, getMetadataPreview } from '../api'
 
 const dsOptions = ref<{ label: string; value: number }[]>([])
-const dsId = ref<number | null>(null)
+const dsId = ref<number | undefined>(undefined)
 const tables = ref<any[]>([])
 const tablesLoading = ref(false)
 const tableFilter = ref('')
