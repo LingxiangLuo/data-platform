@@ -39,36 +39,36 @@
 
     <!-- 表格 -->
     <div class="glass-card table-card">
-      <a-table :data="items" :loading="loading" :bordered="false" :pagination="false" stripe>
+      <a-table :data="items" :loading="loading" :bordered="false" :pagination="false" stripe :scroll="{ x: 1300 }">
         <template #columns>
-          <a-table-column title="工作流名" data-index="name" :width="220">
+          <a-table-column title="工作流名" data-index="name" :width="180">
             <template #cell="{ record }">
               <span class="wf-name">{{ record.name }}</span>
               <span class="wf-version">v{{ record.version }}</span>
             </template>
           </a-table-column>
-          <a-table-column title="步骤数" :width="80">
+          <a-table-column title="步骤" :width="60">
             <template #cell="{ record }">
               <span class="mono">{{ (record.steps || []).length }}</span>
             </template>
           </a-table-column>
-          <a-table-column title="状态" :width="100">
+          <a-table-column title="状态" :width="80">
             <template #cell="{ record }">
               <a-tag :color="statusColor(record.status)" size="small">{{ statusLabel(record.status) }}</a-tag>
             </template>
           </a-table-column>
-          <a-table-column title="CRON" :width="140">
+          <a-table-column title="CRON" :width="120">
             <template #cell="{ record }">
               <span class="mono text-muted">{{ record.cron_expression || '—' }}</span>
             </template>
           </a-table-column>
-          <a-table-column title="调度" :width="100">
+          <a-table-column title="调度" :width="70">
             <template #cell="{ record }">
               <a-tag v-if="record.schedule_status === 'ONLINE'" color="green" size="small">运行中</a-tag>
-              <a-tag v-else color="gray" size="small">已停止</a-tag>
+              <a-tag v-else color="gray" size="small">停止</a-tag>
             </template>
           </a-table-column>
-          <a-table-column title="标签" :width="160">
+          <a-table-column title="标签" :width="140">
             <template #cell="{ record }">
               <a-space :size="4" wrap>
                 <a-tag v-for="t in (record.tags || [])" :key="t" size="small" color="arcoblue">{{ t }}</a-tag>
@@ -76,13 +76,13 @@
               </a-space>
             </template>
           </a-table-column>
-          <a-table-column title="描述" data-index="description" :width="180" :ellipsis="true" :tooltip="true" />
-          <a-table-column title="更新时间" :width="150">
+          <a-table-column title="描述" data-index="description" :width="160" :ellipsis="true" :tooltip="true" />
+          <a-table-column title="更新时间" :width="140">
             <template #cell="{ record }">
-              <span class="mono text-muted">{{ formatTime(record.updated_at) }}</span>
+              <span class="mono text-muted text-nowrap">{{ formatTime(record.updated_at) }}</span>
             </template>
           </a-table-column>
-          <a-table-column title="操作" :width="280" fixed="right">
+          <a-table-column title="操作" :width="260" fixed="right">
             <template #cell="{ record }">
               <a-space :size="4">
                 <a-button type="text" size="mini" @click="openEdit(record)" :disabled="!canEdit(record)">编辑</a-button>
@@ -566,6 +566,7 @@ onMounted(() => {
 
 .mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
 .text-muted { color: #86909C; }
+.text-nowrap { white-space: nowrap; }
 .cell-ellipsis { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty-state { padding: 40px 0; text-align: center; }
 .pagination-wrap { padding: 16px 24px; display: flex; justify-content: flex-end; border-top: 1px solid #F2F3F5; }
