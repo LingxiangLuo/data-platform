@@ -61,6 +61,29 @@ def _migrate_component_columns():
 _migrate_component_columns()
 
 
+def _migrate_workflow_run_columns():
+    """workflow 表按需新增优先级和运行缓存列"""
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'workflow'"
+        )).fetchall()
+        existing = {r[0] for r in rows}
+        adds = [
+            ("priority", "ALTER TABLE workflow ADD COLUMN priority INT NOT NULL DEFAULT 3 COMMENT '优先级 1=P1高 2=P2中 3=P3低'"),
+            ("last_run_status", "ALTER TABLE workflow ADD COLUMN last_run_status VARCHAR(50) NULL COMMENT '最近运行状态'"),
+            ("last_run_time", "ALTER TABLE workflow ADD COLUMN last_run_time DATETIME NULL COMMENT '最近运行时间'"),
+            ("last_run_duration", "ALTER TABLE workflow ADD COLUMN last_run_duration INT NULL COMMENT '最近运行耗时秒'"),
+        ]
+        for col, ddl in adds:
+            if col not in existing:
+                conn.execute(text(ddl))
+                conn.commit()
+
+
+_migrate_workflow_run_columns()
+
+
 # 确保管理员密码正确
 def _ensure_admin():
     from app.models.user import SysUser

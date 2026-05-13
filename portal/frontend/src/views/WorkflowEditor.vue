@@ -21,6 +21,7 @@ const workflowStatus = ref('draft')
 const cronExpression = ref('')
 const workflowTags = ref<string[]>([])
 const tagInput = ref('')
+const workflowPriority = ref(3)
 const dagNodes = ref<DagNode[]>([])
 const dagEdges = ref<DagEdge[]>([])
 const loading = ref(false)
@@ -41,6 +42,7 @@ async function loadWorkflow() {
   workflowStatus.value = res.status
   cronExpression.value = res.cron_expression || ''
   workflowTags.value = res.tags || []
+  workflowPriority.value = res.priority || 3
   if (res.dag && res.dag.nodes) {
     dagNodes.value = res.dag.nodes
     dagEdges.value = res.dag.edges || []
@@ -70,6 +72,7 @@ async function handleSave() {
       description: workflowDesc.value || null,
       cron_expression: cronExpression.value || null,
       tags: workflowTags.value,
+      priority: workflowPriority.value,
       dag: { nodes: dagNodes.value, edges: dagEdges.value },
     }
     if (workflowId.value) {
@@ -128,6 +131,11 @@ function handleAutoLayout() { dagCanvas.value?.autoLayout() }
     />
     <div class="workflow-editor__meta">
       <input v-model="workflowName" placeholder="工作流名称" class="workflow-editor__name-input" />
+      <select v-model="workflowPriority" class="workflow-editor__priority-select">
+        <option :value="1">P1 高</option>
+        <option :value="2">P2 中</option>
+        <option :value="3">P3 低</option>
+      </select>
       <input v-model="cronExpression" placeholder="CRON 表达式（可选）" class="workflow-editor__cron-input" />
       <div class="workflow-editor__tags">
         <span v-for="t in workflowTags" :key="t" class="tag-chip-edit">
@@ -154,6 +162,7 @@ function handleAutoLayout() { dagCanvas.value?.autoLayout() }
 .workflow-editor { display: flex; flex-direction: column; height: 100vh; background: #f7f8fa; }
 .workflow-editor__meta { display: flex; gap: 12px; padding: 8px 16px; background: #fff; border-bottom: 1px solid #e5e7eb; }
 .workflow-editor__name-input { flex: 1; max-width: 300px; padding: 6px 10px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 14px; }
+.workflow-editor__priority-select { width: 80px; padding: 6px 8px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 13px; color: #333; background: #fff; cursor: pointer; }
 .workflow-editor__cron-input { width: 200px; padding: 6px 10px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 13px; color: #666; }
 .workflow-editor__tags { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; border: 1px solid #d9d9d9; border-radius: 4px; padding: 3px 8px; min-width: 160px; background: #fff; }
 .tag-chip-edit { display: inline-flex; align-items: center; gap: 3px; background: #e8f3ff; color: #165dff; padding: 1px 6px; border-radius: 10px; font-size: 12px; }

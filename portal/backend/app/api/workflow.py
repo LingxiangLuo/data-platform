@@ -54,6 +54,7 @@ class WorkflowCreate(BaseModel):
     dag: Optional[DagPayload] = None
     cron_expression: Optional[str] = None
     tags: Optional[List[str]] = None
+    priority: Optional[int] = Field(default=3, ge=1, le=3)
 
 class WorkflowUpdate(BaseModel):
     name: Optional[str] = None
@@ -62,6 +63,7 @@ class WorkflowUpdate(BaseModel):
     dag: Optional[DagPayload] = None
     cron_expression: Optional[str] = None
     tags: Optional[List[str]] = None
+    priority: Optional[int] = Field(default=None, ge=1, le=3)
 
 
 def _serialize(w: Workflow, db: Session) -> dict:
@@ -85,6 +87,23 @@ def _serialize(w: Workflow, db: Session) -> dict:
             "component_type": c.type if c else None,
             "component_status": c.status if c else None,
         })
+    # 计算下次执行时间
+    next_fire_time = None
+    if w.cron_expression:
+        try:
+            from croniter import croniter
+            from datetime import datetime
+            cron_expr = w.cron_expression.strip()
+            # DS 用 6 段 CRON（含秒），croniter 只支持 5 段，去掉第一段秒
+            parts = cron_expr.split()
+            if len(parts) == 6:
+                cron_expr = ' '.join(parts[1:])
+            # 替换 ? 为 * (DS 用 ? 表示不指定)
+            cron_expr = cron_expr.replace('?', '*')
+            cron = croniter(cron_expr, datetime.now())
+            next_fire_time = str(cron.get_next(datetime))
+        except Exception:
+            pass
     return {
         "id": w.id,
         "name": w.name,
@@ -96,6 +115,11 @@ def _serialize(w: Workflow, db: Session) -> dict:
         "schedule_status": w.schedule_status,
         "status": w.status,
         "version": w.version,
+        "priority": w.priority or 3,
+        "last_run_status": w.last_run_status,
+        "last_run_time": str(w.last_run_time) if w.last_run_time else None,
+        "last_run_duration": w.last_run_duration,
+        "next_fire_time": next_fire_time,
         "ds_process_code": w.ds_process_code,
         "ds_schedule_id": w.ds_schedule_id,
         "created_at": str(w.created_at) if w.created_at else None,
@@ -203,6 +227,59 @@ async def _sync_to_ds(db: Session, w: Workflow) -> tuple:
     return pd_code, schedule_id
 
 
+# ===== 运行信息同步 =====
+@router.post("/sync-last-run")
+async def sync_last_run(
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """批量从 DS 同步最近运行信息到 Portal 缓存字段"""
+    from datetime import datetime
+    workflows = db.query(Workflow).filter(
+        Workflow.ds_process_code.isnot(None)
+    ).all()
+    if not workflows:
+        return {"synced": 0}
+    try:
+        ds = get_ds_client()
+        pc = await ds._discover_project()
+        if not pc:
+            return {"synced": 0, "error": "DS project unavailable"}
+    except Exception:
+        return {"synced": 0, "error": "DS unavailable"}
+
+    synced = 0
+    for w in workflows:
+        try:
+            inst = await ds.get(f"/projects/{pc}/process-instances", params={
+                "pageNo": 1, "pageSize": 1,
+                "processDefinitionCode": w.ds_process_code,
+            })
+            last = (inst or {}).get("totalList", [None])[0]
+            if last:
+                w.last_run_status = last.get("state")
+                start_str = last.get("startTime")
+                end_str = last.get("endTime")
+                if start_str:
+                    try:
+                        w.last_run_time = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        w.last_run_time = None
+                if start_str and end_str:
+                    try:
+                        fmt = "%Y-%m-%d %H:%M:%S"
+                        w.last_run_duration = int(
+                            (datetime.strptime(end_str, fmt) - datetime.strptime(start_str, fmt)).total_seconds()
+                        )
+                    except Exception:
+                        pass
+                synced += 1
+        except Exception:
+            continue
+    db.commit()
+    return {"synced": synced}
+
+
 # ===== CRUD =====
 @router.get("")
 def list_workflows(
@@ -253,6 +330,7 @@ def create_workflow(
         schedule_status="OFFLINE",
         status=STATUS_DRAFT,
         version=1,
+        priority=req.priority or 3,
         created_by=current_user.id,
     )
     db.add(w)
@@ -318,6 +396,8 @@ def update_workflow(
         w.tags = updates["tags"] or []
     if "cron_expression" in updates:
         w.cron_expression = updates["cron_expression"]
+    if "priority" in updates:
+        w.priority = updates["priority"]
     if "steps" in updates:
         steps_data = _validate_steps(db, [WorkflowStep(**s) for s in updates["steps"]])
         w.steps_json = steps_data
