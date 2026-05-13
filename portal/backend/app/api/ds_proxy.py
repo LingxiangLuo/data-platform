@@ -3,10 +3,13 @@ import logging
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
+from app.core.database import get_db
 from app.core.ds_client import get_ds_client, DSClient
 from app.core.security import get_current_user
 from app.models.user import SysUser
+from app.models.workflow import Workflow
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ds", tags=["DolphinScheduler 代理"])
@@ -280,6 +283,7 @@ async def list_instances(
     startDate: str = "",
     endDate: str = "",
     processDefinitionCode: int = 0,
+    db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
     """运行记录列表（所有工作流的实例）"""
@@ -299,6 +303,12 @@ async def list_instances(
     if not data:
         return {"list": [], "total": 0}
 
+    # 构建 ds_process_code → Portal 工作流名称 的映射
+    all_wf = db.query(Workflow.ds_process_code, Workflow.name).filter(
+        Workflow.ds_process_code.isnot(None)
+    ).all()
+    code_to_name = {wf.ds_process_code: wf.name for wf in all_wf}
+
     items = []
     for inst in data.get("totalList", []):
         start = inst.get("startTime")
@@ -311,10 +321,18 @@ async def list_instances(
             except Exception:
                 pass
 
+        pd_code = inst.get("processDefinitionCode")
+        # 优先用 Portal 工作流名称，fallback 到 DS 名称，再 fallback 到 code
+        name = (
+            code_to_name.get(pd_code)
+            or inst.get("processDefinitionName")
+            or (f"工作流-{pd_code}" if pd_code else f"实例-{inst.get('id')}")
+        )
+
         items.append({
             "id": inst.get("id"),
-            "processDefinitionCode": inst.get("processDefinitionCode"),
-            "name": inst.get("processDefinitionName", ""),
+            "processDefinitionCode": pd_code,
+            "name": name,
             "state": _fmt_state(inst.get("state")),
             "startTime": start,
             "endTime": end,
