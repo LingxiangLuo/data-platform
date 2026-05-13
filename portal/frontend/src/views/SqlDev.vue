@@ -81,16 +81,12 @@
                     {{ node.data.type.slice(0, 2).toUpperCase() }}
                   </span>
                   <span class="node-name">{{ node.name }}</span>
-                  <span
-                    class="status-tag"
-                    :style="statusTagStyle(node.data.status)"
-                  >
+                  <a-tooltip :content="statusLabel(node.data.status)" position="right">
                     <span
-                      class="status-dot-inline"
+                      class="status-dot-only"
                       :style="{ background: statusColor(node.data.status) }"
                     ></span>
-                    {{ statusLabel(node.data.status) }}
-                  </span>
+                  </a-tooltip>
                 </div>
                 <template #content>
                   <a-doption @click="openComp(node.data)">打开</a-doption>
@@ -681,7 +677,7 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
   border-bottom: 1px solid #E5E6EB;
 }
 .sidebar-title { font-size: 14px; font-weight: 600; color: #1D2129; }
-.sidebar-search { padding: 10px 12px; border-bottom: 1px solid #F2F3F5; }
+.sidebar-search { padding: 6px 10px; border-bottom: 1px solid #F2F3F5; }
 
 .comp-tree { flex: 1; overflow-y: auto; padding: 6px 0; }
 .comp-tree::-webkit-scrollbar { width: 6px; }
@@ -693,14 +689,14 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 8px 12px;
-  font-size: 12px;
+  padding: 5px 10px;
+  font-size: 11px;
   font-weight: 600;
   color: #4E5969;
   cursor: pointer;
   user-select: none;
   border-radius: 4px;
-  margin: 1px 6px;
+  margin: 1px 4px;
   transition: background 0.15s;
 }
 .grp-header:hover { background: #F2F3F5; }
@@ -736,10 +732,10 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 .tree-node {
   display: flex;
   align-items: center;
-  gap: 7px;
-  height: 32px;
+  gap: 5px;
+  height: 26px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   transition: background 0.15s, color 0.15s;
   position: relative;
   padding-right: 4px;
@@ -749,14 +745,14 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 /* 文件夹节点 */
 .folder-node { color: #4E5969; font-weight: 500; }
 .folder-node:hover .node-actions { opacity: 1; }
-.folder-icon { font-size: 14px; color: #F7BA1E; flex-shrink: 0; }
+.folder-icon { font-size: 13px; color: #F7BA1E; flex-shrink: 0; }
 .node-toggle { display: flex; align-items: center; flex-shrink: 0; cursor: pointer; }
 .node-toggle:hover { color: #2B5AED; }
 
 /* 组件节点 */
 .comp-node { color: #1D2129; }
 .comp-node:hover { background: #EAF1FF; }
-.comp-node:hover .status-tag { opacity: 0.95; }
+.comp-node:hover .status-dot-only { opacity: 1; }
 .comp-node.comp-open {
   background: linear-gradient(90deg, #EAF1FF 0%, #F0F5FF 100%);
   color: #2B5AED;
@@ -765,23 +761,23 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 }
 
 .node-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rename-input { flex: 1; height: 22px; font-size: 12px; }
+.rename-input { flex: 1; height: 20px; font-size: 12px; }
 
 .node-actions {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   opacity: 0;
   transition: opacity 0.15s;
   flex-shrink: 0;
-  padding-right: 6px;
+  padding-right: 4px;
 }
 .node-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: 4px;
   color: #86909C;
   font-size: 13px;
@@ -791,14 +787,14 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 .node-action.danger:hover { background: #FFECE8; color: #F53F3F; box-shadow: 0 1px 3px rgba(245,63,63,0.15); }
 
 .lang-badge {
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 700;
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: 1px 4px;
+  border-radius: 3px;
   color: #fff;
   flex-shrink: 0;
   letter-spacing: 0.3px;
-  min-width: 20px;
+  min-width: 18px;
   text-align: center;
 }
 .badge-sql { background: linear-gradient(135deg, #2B5AED 0%, #3B7CFF 100%); }
@@ -806,28 +802,26 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 .badge-shell { background: linear-gradient(135deg, #722ED1 0%, #9558DB 100%); }
 .badge-datax { background: linear-gradient(135deg, #FF7D00 0%, #FFA133 100%); }
 
-.status-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 1px 8px;
-  border-radius: 10px;
+/* 状态改为纯小圆点，hover 时通过 tooltip 显示文字 */
+.status-dot-only {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
   flex-shrink: 0;
   margin-left: auto;
-  margin-right: 8px;
-  height: 18px;
-  line-height: 16px;
-  white-space: nowrap;
+  margin-right: 10px;
+  opacity: 0.7;
   transition: opacity 0.15s;
+}
+/* 保留旧 status-tag 兼容性（不显示） */
+.status-tag {
+  display: none;
 }
 .status-dot-inline {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-  box-shadow: 0 0 0 1.5px rgba(255,255,255,0.6);
 }
 .opt-dot {
   display: inline-block;
