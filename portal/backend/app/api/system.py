@@ -99,3 +99,71 @@ async def list_services(db: Session = Depends(get_db)) -> Dict[str, Any]:
         },
     ]
     return {"services": services}
+
+
+@router.get("/info")
+async def system_info() -> Dict[str, Any]:
+    """动态系统信息 — 替代前端硬编码"""
+    import os
+    import platform
+    import shutil
+
+    cpu_count = os.cpu_count() or 0
+
+    # 内存信息
+    mem_total = 0
+    mem_available = 0
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    mem_total = int(line.split()[1]) * 1024
+                elif line.startswith("MemAvailable:"):
+                    mem_available = int(line.split()[1]) * 1024
+    except Exception:
+        pass
+
+    # 磁盘
+    disk_total = 0
+    disk_used = 0
+    try:
+        usage = shutil.disk_usage("/")
+        disk_total = usage.total
+        disk_used = usage.used
+    except Exception:
+        pass
+
+    # 系统运行时间
+    uptime_seconds = 0
+    try:
+        with open("/proc/uptime") as f:
+            uptime_seconds = int(float(f.read().split()[0]))
+    except Exception:
+        pass
+
+    def fmt_bytes(b: int) -> str:
+        if b >= 1024**3:
+            return f"{b / 1024**3:.1f} GB"
+        return f"{b / 1024**2:.0f} MB"
+
+    def fmt_uptime(s: int) -> str:
+        days = s // 86400
+        hours = (s % 86400) // 3600
+        if days > 0:
+            return f"{days}d {hours}h"
+        return f"{hours}h {(s % 3600) // 60}m"
+
+    return {
+        "os": platform.system() + " " + platform.release(),
+        "platform": platform.platform(),
+        "cpu_count": cpu_count,
+        "memory_total": fmt_bytes(mem_total),
+        "memory_available": fmt_bytes(mem_available),
+        "memory_usage_pct": round((mem_total - mem_available) / mem_total * 100, 1) if mem_total else 0,
+        "disk_total": fmt_bytes(disk_total),
+        "disk_used": fmt_bytes(disk_used),
+        "disk_usage_pct": round(disk_used / disk_total * 100, 1) if disk_total else 0,
+        "uptime": fmt_uptime(uptime_seconds),
+        "deploy_mode": "Docker Compose",
+        "public_port": 80,
+    }
