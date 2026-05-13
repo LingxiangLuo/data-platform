@@ -646,6 +646,27 @@ async def schedule_offline(
     db.refresh(w)
     return {"message": "调度已关闭", **_serialize(w, db)}
 
+
+@router.post("/cron-preview")
+async def cron_preview(body: dict):
+    """给定 CRON 表达式，返回未来 5 次执行时间"""
+    from croniter import croniter
+    from datetime import datetime as dt
+    cron = body.get("cron_expression", "")
+    if not cron or not cron.strip():
+        return {"times": []}
+    parts = cron.strip().split()
+    if len(parts) == 6:
+        parts = parts[1:]
+    cron5 = " ".join(parts).replace("?", "*")
+    try:
+        ci = croniter(cron5, dt.now())
+        times = [ci.get_next(dt).strftime("%Y-%m-%d %H:%M") for _ in range(5)]
+    except Exception:
+        return {"times": [], "error": "无效的 CRON 表达式"}
+    return {"times": times}
+
+
 def list_scheduled_workflows(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),

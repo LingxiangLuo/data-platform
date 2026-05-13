@@ -261,7 +261,7 @@ function runWf(w: Workflow) {
 }
 
 function scheduleOn(w: Workflow) {
-  if (!w.cron_expression) { Message.warning('未配置 CRON,请先编辑'); return }
+  if (!w.cron_expression) { Message.info('请先配置调度'); router.push(`/workflows/${w.id}/edit`); return }
   Modal.confirm({
     title: '开启调度',
     content: `按 CRON「${w.cron_expression}」开启自动调度?`,
