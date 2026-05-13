@@ -1,16 +1,31 @@
 #!/bin/bash
 # ============================================
 # 数据中台 MVP - 本地完整复刻脚本
-# 适用于 Windows WSL / Docker Desktop
+# 适用于 macOS (Docker Desktop) / Windows WSL
 # ============================================
 set -e
 
 echo "=== 数据中台 MVP 本地复刻 ==="
 echo ""
 
+# 0. 检测平台
+OS="$(uname -s)"
+case "$OS" in
+    Darwin) PLATFORM="macOS" ;;
+    Linux)  PLATFORM="Linux/WSL" ;;
+    *)      PLATFORM="$OS" ;;
+esac
+echo "平台: $PLATFORM"
+echo ""
+
 # 1. 检查 Docker
 if ! command -v docker &> /dev/null; then
-    echo "ERROR: Docker 未安装。请先安装 Docker Desktop。"
+    echo "ERROR: Docker 未安装。"
+    if [ "$PLATFORM" = "macOS" ]; then
+        echo "  brew install --cask docker  或下载 https://www.docker.com/products/docker-desktop/"
+    else
+        echo "  请安装 Docker Desktop 或 docker-ce"
+    fi
     exit 1
 fi
 
@@ -78,4 +93,8 @@ echo ""
 echo "访问地址: http://localhost"
 echo "账号: admin / admin123"
 echo ""
-echo "如果 DolphinScheduler 启动较慢，请等待 2 分钟后再使用调度功能。"
+echo "提示："
+echo "  - DolphinScheduler 首次启动需要 2 分钟"
+echo "  - macOS 建议 Docker Desktop 分配 4GB+ 内存"
+echo "  - 停止: docker compose down"
+echo "  - 停止并清数据: docker compose down -v"
