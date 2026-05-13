@@ -11,6 +11,7 @@ from sqlalchemy import text
 from app.core.database import engine, Base, SessionLocal
 from app.core.security import hash_password
 from app.api import auth, datasources, sync_tasks, dashboard, ds_proxy, notifications, component, workflow, system, metadata, project
+from app.models.component_folder import ComponentFolder  # noqa: F401 — 确保 create_all 创建该表
 
 # 创建表
 Base.metadata.create_all(bind=engine)
@@ -43,16 +44,16 @@ _migrate_sync_task_columns()
 
 
 def _migrate_component_columns():
-    """component 表按需新增列（文件夹归属）"""
+    """component 表按需新增 folder_id 列"""
     with engine.connect() as conn:
         rows = conn.execute(text(
             "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
             "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'component'"
         )).fetchall()
         existing = {r[0] for r in rows}
-        if "folder_id" not in existing:
+        if 'folder_id' not in existing:
             conn.execute(text(
-                "ALTER TABLE component ADD COLUMN folder_id BIGINT NULL COMMENT '所属文件夹id'"
+                "ALTER TABLE component ADD COLUMN folder_id BIGINT NULL COMMENT '所属文件夹'"
             ))
             conn.commit()
 
