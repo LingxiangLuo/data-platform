@@ -235,8 +235,11 @@ def list_tables(ds: DataSource, schema: Optional[str] = None) -> List[Dict[str, 
         if t == "postgresql":
             cur = conn.cursor()
             cur.execute(
-                "SELECT table_name, obj_description(quote_ident(table_schema)||'.'||quote_ident(table_name), 'pg_class') "
-                "FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name"
+                "SELECT t.table_name, d.description "
+                "FROM information_schema.tables t "
+                "LEFT JOIN pg_catalog.pg_class c ON c.relname = t.table_name "
+                "LEFT JOIN pg_catalog.pg_description d ON d.objoid = c.oid AND d.objsubid = 0 "
+                "WHERE t.table_schema='public' ORDER BY t.table_name"
             )
             return [{"name": r[0], "comment": r[1] or ""} for r in cur.fetchall()]
         if t == "sqlserver":
