@@ -3,79 +3,129 @@
     <div class="glass-card page-header">
       <div>
         <h3 class="page-title">数据血缘</h3>
-        <p class="page-desc">追踪数据流转关系与依赖</p>
+        <p class="page-desc">自动解析组件代码，追踪数据流转关系</p>
+      </div>
+      <a-button @click="loadLineage" :loading="loading">
+        <template #icon><icon-refresh /></template>
+        刷新
+      </a-button>
+    </div>
+
+    <div class="glass-card lineage-body" v-if="!loading && nodes.length">
+      <!-- 分层展示 -->
+      <div class="lineage-flow">
+        <div class="lineage-layer" v-if="sourceNodes.length">
+          <div class="layer-label">数据源层</div>
+          <div class="layer-items">
+            <div v-for="n in sourceNodes" :key="n.id" class="node source" :class="{ highlighted: highlighted.has(n.id) }" @click="highlight(n.id)">
+              <div class="node-name">{{ n.name }}</div>
+              <div class="node-meta">{{ n.datasource || '' }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="arrow-group" v-if="sourceNodes.length && odsNodes.length">
+          <div class="arrow-line"></div>
+          <div class="arrow-label">DataX / SQL</div>
+          <div class="arrow-line"></div>
+        </div>
+
+        <div class="lineage-layer" v-if="odsNodes.length">
+          <div class="layer-label">ODS 贴源层</div>
+          <div class="layer-items">
+            <div v-for="n in odsNodes" :key="n.id" class="node ods" :class="{ highlighted: highlighted.has(n.id) }" @click="highlight(n.id)">
+              <div class="node-badge ods-badge">ODS</div>
+              <div class="node-name">{{ n.name }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="arrow-group" v-if="odsNodes.length && appNodes.length">
+          <div class="arrow-line"></div>
+          <div class="arrow-label">ETL / SQL</div>
+          <div class="arrow-line"></div>
+        </div>
+
+        <div class="lineage-layer" v-if="appNodes.length">
+          <div class="layer-label">DW / ADS 应用层</div>
+          <div class="layer-items">
+            <div v-for="n in appNodes" :key="n.id" class="node app" :class="{ highlighted: highlighted.has(n.id) }" @click="highlight(n.id)">
+              <div class="node-badge app-badge">{{ n.name.startsWith('dim') ? 'DIM' : 'ADS' }}</div>
+              <div class="node-name">{{ n.name }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 边列表 -->
+      <div class="edge-list" v-if="edges.length">
+        <div class="edge-title">血缘关系 ({{ edges.length }})</div>
+        <div class="edge-table">
+          <div v-for="(e, i) in edges" :key="i" class="edge-row">
+            <code class="edge-node">{{ e.source }}</code>
+            <span class="edge-arrow">→</span>
+            <code class="edge-node">{{ e.target }}</code>
+            <a-tag size="small" :color="e.type === 'DataX' ? 'purple' : 'blue'">{{ e.type }}</a-tag>
+            <span class="edge-task">{{ e.task_name }}</span>
+          </div>
+        </div>
       </div>
     </div>
 
-    <div class="glass-card lineage-card">
-      <div class="lineage-diagram">
-        <div class="lineage-layer">
-          <div class="layer-label">数据源</div>
-          <div class="layer-items">
-            <div class="node source">
-              <div class="node-badge" style="background: #EFF4FF; color: #2B5AED;">MySQL</div>
-              <div class="node-name">生产库-用户中心</div>
-              <div class="node-meta">t_user, t_order</div>
-            </div>
-            <div class="node source">
-              <div class="node-badge" style="background: #F5E8FF; color: #7B61FF;">SQLServer</div>
-              <div class="node-name">业务库-交易系统</div>
-              <div class="node-meta">trade_record, account</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="arrow-group">
-          <div class="arrow-line"></div>
-          <div class="arrow-label">DataX 同步</div>
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v12m0 0l-3-3m3 3l3-3" stroke="#2B5AED" stroke-width="1.5" stroke-linecap="round"/></svg>
-        </div>
-
-        <div class="lineage-layer">
-          <div class="layer-label">ODS 贴源层</div>
-          <div class="layer-items">
-            <div class="node intermediate">
-              <div class="node-badge" style="background: #E8FFF3; color: #00B42A;">ODS</div>
-              <div class="node-name">ods_user</div>
-              <div class="node-meta">用户数据贴源表</div>
-            </div>
-            <div class="node intermediate">
-              <div class="node-badge" style="background: #E8FFF3; color: #00B42A;">ODS</div>
-              <div class="node-name">ods_trade</div>
-              <div class="node-meta">交易数据贴源表</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="arrow-group">
-          <div class="arrow-line"></div>
-          <div class="arrow-label">DolphinScheduler ETL</div>
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v12m0 0l-3-3m3 3l3-3" stroke="#2B5AED" stroke-width="1.5" stroke-linecap="round"/></svg>
-        </div>
-
-        <div class="lineage-layer">
-          <div class="layer-label">DIM / DW 应用层</div>
-          <div class="layer-items">
-            <div class="node target">
-              <div class="node-badge" style="background: #FFF7E8; color: #FF7D00;">DIM</div>
-              <div class="node-name">dim_user</div>
-              <div class="node-meta">用户维度表</div>
-            </div>
-            <div class="node target">
-              <div class="node-badge" style="background: #FFF7E8; color: #FF7D00;">DW</div>
-              <div class="node-name">dw_trade_daily</div>
-              <div class="node-meta">交易日汇总表</div>
-            </div>
-          </div>
-        </div>
+    <div class="glass-card empty-card" v-else-if="!loading">
+      <div class="empty-state">
+        <p>暂无血缘数据</p>
+        <p class="text-muted">发布组件或创建同步任务后，系统将自动解析数据流转关系</p>
       </div>
+    </div>
 
-      <a-alert type="info" style="margin-top: 24px;">
-        数据血缘由 OpenMetadata 自动采集。添加数据源后，系统将自动分析表级和字段级血缘关系。
-      </a-alert>
+    <div class="glass-card loading-card" v-else>
+      <a-spin dot /><span class="text-muted" style="margin-left:8px">正在解析血缘...</span>
     </div>
   </div>
 </template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { IconRefresh } from '@arco-design/web-vue/es/icon'
+import { getMetadataLineage } from '../api'
+
+interface Node { id: string; name: string; datasource?: string; layer: string }
+interface Edge { source: string; target: string; type: string; task_name?: string }
+
+const loading = ref(false)
+const nodes = ref<Node[]>([])
+const edges = ref<Edge[]>([])
+const highlighted = ref<Set<string>>(new Set())
+
+const sourceNodes = computed(() => nodes.value.filter(n => n.layer === 'source'))
+const odsNodes = computed(() => nodes.value.filter(n => n.layer === 'ods'))
+const appNodes = computed(() => nodes.value.filter(n => n.layer === 'app'))
+
+function highlight(nodeId: string) {
+  const s = new Set<string>()
+  s.add(nodeId)
+  // 找上下游
+  for (const e of edges.value) {
+    if (e.source === nodeId) s.add(e.target)
+    if (e.target === nodeId) s.add(e.source)
+  }
+  highlighted.value = s
+}
+
+async function loadLineage() {
+  loading.value = true
+  highlighted.value = new Set()
+  try {
+    const res: any = await getMetadataLineage()
+    nodes.value = res?.nodes || []
+    edges.value = res?.edges || []
+  } catch { nodes.value = []; edges.value = [] }
+  loading.value = false
+}
+
+onMounted(() => { loadLineage() })
+</script>
 
 <style scoped>
 .page { animation: fadeIn 0.3s ease-out; }
@@ -84,34 +134,37 @@
 .page-title { margin: 0; font-size: 18px; font-weight: 600; color: #1D2129; }
 .page-desc { margin: 4px 0 0; font-size: 13px; color: #86909C; }
 
-.lineage-card { padding: 28px; }
-.lineage-diagram { display: flex; flex-direction: column; align-items: center; gap: 0; }
-.lineage-layer { width: 100%; max-width: 550px; text-align: center; }
+.lineage-body { padding: 24px; }
+.lineage-flow { display: flex; flex-direction: column; align-items: center; gap: 0; }
+.lineage-layer { width: 100%; text-align: center; }
 .layer-label { font-size: 11px; color: #86909C; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 2px; font-weight: 600; }
-.layer-items { display: flex; gap: 20px; justify-content: center; }
+.layer-items { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
 
 .node {
-  background: #FFFFFF;
-  border: 1px solid #E5E8ED;
-  border-radius: 10px;
-  padding: 16px 22px;
-  min-width: 180px;
-  text-align: center;
-  transition: all 0.2s;
+  background: #FFFFFF; border: 1.5px solid #E5E8ED; border-radius: 8px;
+  padding: 12px 18px; min-width: 120px; text-align: center; cursor: pointer; transition: all 0.2s;
 }
-.node:hover { border-color: #D6E4FF; box-shadow: 0 4px 12px rgba(43,90,237,0.08); }
-.node-badge {
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-.node-name { font-size: 13px; font-weight: 600; color: #1D2129; margin-bottom: 2px; }
-.node-meta { font-size: 11px; color: #86909C; }
+.node:hover { border-color: #D6E4FF; box-shadow: 0 2px 8px rgba(43,90,237,0.08); }
+.node.highlighted { border-color: #165DFF; box-shadow: 0 0 0 2px rgba(22,93,255,0.15); }
+.node-badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 600; margin-bottom: 6px; }
+.ods-badge { background: #E8FFF3; color: #00B42A; }
+.app-badge { background: #FFF7E8; color: #FF7D00; }
+.node-name { font-size: 12px; font-weight: 600; color: #1D2129; font-family: 'JetBrains Mono', monospace; }
+.node-meta { font-size: 10px; color: #86909C; margin-top: 2px; }
 
-.arrow-group { display: flex; flex-direction: column; align-items: center; padding: 10px 0; }
-.arrow-line { width: 1px; height: 20px; background: linear-gradient(to bottom, #E5E8ED, #2B5AED); }
+.arrow-group { display: flex; flex-direction: column; align-items: center; padding: 8px 0; }
+.arrow-line { width: 1.5px; height: 16px; background: linear-gradient(to bottom, #E5E8ED, #2B5AED); }
 .arrow-label { font-size: 10px; color: #2B5AED; background: #EFF4FF; padding: 2px 10px; border-radius: 10px; margin: 4px 0; font-weight: 500; }
+
+.edge-list { margin-top: 28px; border-top: 1px solid #F2F3F5; padding-top: 16px; }
+.edge-title { font-size: 13px; font-weight: 600; color: #1D2129; margin-bottom: 10px; }
+.edge-table { display: flex; flex-direction: column; gap: 6px; }
+.edge-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #FAFBFC; border-radius: 4px; font-size: 12px; }
+.edge-node { font-family: 'JetBrains Mono', monospace; color: #1D2129; }
+.edge-arrow { color: #86909C; }
+.edge-task { color: #86909C; font-size: 11px; margin-left: auto; }
+
+.empty-card, .loading-card { padding: 60px 0; text-align: center; }
+.text-muted { color: #86909C; }
+.empty-state { padding: 40px 0; text-align: center; }
 </style>

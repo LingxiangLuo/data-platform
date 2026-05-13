@@ -77,11 +77,11 @@
           <template #title>数据资产</template>
           <a-menu-item key="/data-assets">
             <template #icon><icon-apps /></template>
-            数据表
+            数据目录
           </a-menu-item>
           <a-menu-item key="/field-assets">
             <template #icon><icon-list /></template>
-            字段资产
+            词根管理
           </a-menu-item>
           <a-menu-item key="/lineage">
             <template #icon><icon-relation /></template>
