@@ -114,6 +114,33 @@ def _migrate_alert_rule_table():
 _migrate_alert_rule_table()
 
 
+def _migrate_word_root_table():
+    """按需创建 word_root 表"""
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT TABLE_NAME FROM information_schema.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'word_root'"
+        )).fetchall()
+        if not rows:
+            conn.execute(text("""
+                CREATE TABLE word_root (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    en VARCHAR(64) NOT NULL COMMENT '英文词根',
+                    cn VARCHAR(64) NOT NULL COMMENT '中文名',
+                    category VARCHAR(32) NOT NULL DEFAULT 'business' COMMENT 'business/technical/metric',
+                    description VARCHAR(255) NULL COMMENT '说明',
+                    example VARCHAR(255) NULL COMMENT '示例用法',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_en (en)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+            conn.commit()
+
+
+_migrate_word_root_table()
+
+
 # 确保管理员密码正确
 def _ensure_admin():
     from app.models.user import SysUser
@@ -178,6 +205,9 @@ app.include_router(project.router, prefix="/api")
 
 from app.api import alert_rules
 app.include_router(alert_rules.router, prefix="/api")
+
+from app.api import word_roots
+app.include_router(word_roots.router, prefix="/api")
 
 
 @app.get("/api/health")

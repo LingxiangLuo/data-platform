@@ -273,3 +273,163 @@ def execute_ddl(
         return {"ok": True, "message": "建表成功"}
     except Exception as e:
         return {"ok": False, "message": f"建表失败: {e}"}
+
+
+# ===== 统计 =====
+@router.get("/stats")
+def metadata_stats(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """数据资产统计（工作台用）"""
+    from app.models.datasource import DataSource
+    from app.models.word_root import WordRoot
+
+    ds_count = db.query(DataSource).count()
+    root_count = db.query(WordRoot).count()
+
+    # 统计所有数据源的表数和总行数
+    datasources = db.query(DataSource).filter(
+        DataSource.host.isnot(None), DataSource.username.isnot(None)
+    ).all()
+    table_count = 0
+    total_rows = 0
+    ds_breakdown = []
+    for ds in datasources:
+        if ds.type != "mysql":
+            continue
+        try:
+            import pymysql
+            conn = pymysql.connect(
+                host=ds.host, port=ds.port or 3306,
+                user=ds.username, password=ds.password,
+                database=ds.database_name, connect_timeout=5,
+            )
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT COUNT(*), COALESCE(SUM(TABLE_ROWS),0) "
+                "FROM information_schema.TABLES WHERE TABLE_SCHEMA = %s",
+                (ds.database_name,)
+            )
+            row = cur.fetchone()
+            t_count = row[0] or 0
+            t_rows = row[1] or 0
+            table_count += t_count
+            total_rows += t_rows
+            ds_breakdown.append({"name": ds.name, "tables": t_count, "rows": t_rows})
+            conn.close()
+        except Exception:
+            ds_breakdown.append({"name": ds.name, "tables": 0, "rows": 0})
+
+    # 格式化总行数
+    if total_rows >= 100000000:
+        rows_display = f"{total_rows / 100000000:.1f}亿"
+    elif total_rows >= 10000:
+        rows_display = f"{total_rows / 10000:.1f}w"
+    else:
+        rows_display = str(total_rows)
+
+    return {
+        "datasource_count": ds_count,
+        "table_count": table_count,
+        "total_rows": total_rows,
+        "total_rows_display": rows_display,
+        "word_root_count": root_count,
+        "datasource_breakdown": ds_breakdown,
+    }
+
+
+# ===== 血缘 =====
+@router.get("/lineage")
+def get_lineage(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """自动解析组件/同步任务生成表级血缘"""
+    from app.models.component import Component
+    from app.models.sync_task import SyncTask
+    import json as json_mod
+
+    nodes_map = {}  # table_name → node info
+    edges = []
+
+    def add_node(name, ds_name=None):
+        if not name or name in nodes_map:
+            return
+        # 推断层级
+        lower = name.lower()
+        if lower.startswith("ods_") or lower.startswith("ods."):
+            layer = "ods"
+        elif lower.startswith(("dim_", "dw_", "ads_", "dim.", "dw.", "ads.")):
+            layer = "app"
+        else:
+            layer = "source"
+        nodes_map[name] = {"id": name, "name": name, "datasource": ds_name, "layer": layer}
+
+    # 1. SyncTask — 直接有 source_table / target_table
+    sync_tasks = db.query(SyncTask).filter(SyncTask.status == "active").all()
+    for t in sync_tasks:
+        src = t.source_table
+        tgt = t.target_table
+        if src and tgt:
+            add_node(src, "source")
+            add_node(tgt, "target")
+            edges.append({"source": src, "target": tgt, "type": "DataX", "task_name": t.name})
+
+    # 2. Component (online) — 解析 SQL 和 DataX
+    components = db.query(Component).filter(Component.status == "online").all()
+    for c in components:
+        cfg = c.config_json or {}
+        if c.type == "datax":
+            # 从 rawJson 解析 reader/writer table
+            raw = cfg.get("rawJson", "")
+            if raw:
+                try:
+                    job = json_mod.loads(raw) if isinstance(raw, str) else raw
+                    content = job.get("job", {}).get("content", [{}])[0]
+                    reader_tables = (content.get("reader", {}).get("parameter", {})
+                                     .get("connection", [{}])[0].get("table", []))
+                    writer_tables = (content.get("writer", {}).get("parameter", {})
+                                     .get("connection", [{}])[0].get("table", []))
+                    for st in (reader_tables if isinstance(reader_tables, list) else [reader_tables]):
+                        for tt in (writer_tables if isinstance(writer_tables, list) else [writer_tables]):
+                            if st and tt:
+                                add_node(st)
+                                add_node(tt)
+                                edges.append({"source": st, "target": tt, "type": "DataX", "task_name": c.name})
+                except Exception:
+                    pass
+        elif c.type == "sql":
+            # 简单正则提取 FROM/JOIN/INSERT INTO
+            sql_text = cfg.get("sql", "")
+            if sql_text:
+                import re
+                # 提取 source tables (FROM / JOIN)
+                sources = re.findall(
+                    r'(?:FROM|JOIN)\s+[`"]?(\w+)[`"]?', sql_text, re.IGNORECASE
+                )
+                # 提取 target table (INSERT INTO / CREATE TABLE)
+                targets = re.findall(
+                    r'(?:INSERT\s+INTO|CREATE\s+TABLE)\s+[`"]?(\w+)[`"]?', sql_text, re.IGNORECASE
+                )
+                for s in sources:
+                    add_node(s)
+                for t in targets:
+                    add_node(t)
+                    for s in sources:
+                        edges.append({"source": s, "target": t, "type": "SQL", "task_name": c.name})
+
+    # 去重 edges
+    seen = set()
+    unique_edges = []
+    for e in edges:
+        key = f"{e['source']}→{e['target']}"
+        if key not in seen:
+            seen.add(key)
+            unique_edges.append(e)
+
+    return {
+        "nodes": list(nodes_map.values()),
+        "edges": unique_edges,
+    }
+
