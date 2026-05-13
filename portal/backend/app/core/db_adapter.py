@@ -240,13 +240,16 @@ def list_tables(ds: DataSource, schema: Optional[str] = None) -> List[Dict[str, 
         if t == "postgresql":
             cur = conn.cursor()
             cur.execute(
-                "SELECT t.table_name, d.description "
+                "SELECT t.table_schema, t.table_name, d.description "
                 "FROM information_schema.tables t "
                 "LEFT JOIN pg_catalog.pg_class c ON c.relname = t.table_name "
                 "LEFT JOIN pg_catalog.pg_description d ON d.objoid = c.oid AND d.objsubid = 0 "
                 "WHERE t.table_schema NOT IN ('pg_catalog','information_schema') ORDER BY t.table_name"
             )
-            return [{"name": r[0], "comment": r[1] or ""} for r in cur.fetchall()]
+            return [
+                {"name": f"{r[0]}.{r[1]}" if r[0] != "public" else r[1], "comment": r[2] or ""}
+                for r in cur.fetchall()
+            ]
         if t == "sqlserver":
             cur = conn.cursor()
             cur.execute(
@@ -285,8 +288,11 @@ def list_tables(ds: DataSource, schema: Optional[str] = None) -> List[Dict[str, 
 def list_columns(ds: DataSource, table: str, schema: Optional[str] = None) -> List[Dict[str, Any]]:
     """列出表字段。返回 [{name, type, nullable, comment}]"""
     t = (ds.type or "").lower()
+    # 支持 schema.table 格式
+    if "." in table:
+        schema, table = table.split(".", 1)
     db = schema or ds.database_name
-    conn = _connect(ds, db_override=db)
+    conn = _connect(ds, db_override=db if t != "postgresql" else None)
     try:
         if t == "mysql":
             cur = conn.cursor()
@@ -301,11 +307,18 @@ def list_columns(ds: DataSource, table: str, schema: Optional[str] = None) -> Li
             ]
         if t == "postgresql":
             cur = conn.cursor()
-            cur.execute(
-                "SELECT column_name, data_type, is_nullable "
-                "FROM information_schema.columns WHERE table_name=%s "
-                "ORDER BY ordinal_position", (table,),
-            )
+            if schema:
+                cur.execute(
+                    "SELECT column_name, data_type, is_nullable "
+                    "FROM information_schema.columns WHERE table_schema=%s AND table_name=%s "
+                    "ORDER BY ordinal_position", (schema, table),
+                )
+            else:
+                cur.execute(
+                    "SELECT column_name, data_type, is_nullable "
+                    "FROM information_schema.columns WHERE table_name=%s "
+                    "ORDER BY ordinal_position", (table,),
+                )
             return [
                 {"name": r[0], "type": r[1], "nullable": r[2] == "YES", "comment": ""}
                 for r in cur.fetchall()
