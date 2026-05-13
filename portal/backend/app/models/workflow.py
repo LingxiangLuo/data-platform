@@ -5,15 +5,16 @@ from app.core.database import Base
 
 
 class Workflow(Base):
-    """线性工作流 — 串联多个 Component 形成可调度的流水线"""
+    """DAG 工作流 — 组合多个 Component 形成可调度的有向无环图"""
     __tablename__ = "workflow"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
     description = Column(Text)
-    # 线性步骤数组,顺序即执行顺序
-    # 每个步骤: {component_id: int, name: str (步骤别名,默认取 component 名字)}
+    # 旧版线性步骤（兼容，新版优先使用 dag_json）
     steps_json = Column(JSON, nullable=False, default=list)
+    # DAG 结构: {nodes: [{id, component_id, name, position:{x,y}, skip}], edges: [{id, source, target}]}
+    dag_json = Column(JSON, nullable=True)
     # 调度 (CRON 表达式,可选)
     cron_expression = Column(String(100))
     # 调度状态: ONLINE / OFFLINE (DS 调度开关,与 status 是两回事)

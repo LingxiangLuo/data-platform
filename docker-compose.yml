@@ -94,77 +94,77 @@ services:
       - dmp-net
 
   # ============================================
-  # Elasticsearch - OpenMetadata 依赖 (不对外暴露端口)
+  # Elasticsearch - 已停用（架构冻结后不再使用 OpenMetadata）
   # ============================================
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.24
-    container_name: dmp-es
-    restart: always
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms512m -Xmx512m
-      - cluster.routing.allocation.disk.threshold_enabled=false
-    expose:
-      - "9200"
-    volumes:
-      - es_data:/usr/share/elasticsearch/data
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 60s
-    mem_limit: 1g
-    networks:
-      - dmp-net
+  # elasticsearch:
+  #   image: docker.elastic.co/elasticsearch/elasticsearch:7.17.24
+  #   container_name: dmp-es
+  #   restart: always
+  #   environment:
+  #     - discovery.type=single-node
+  #     - xpack.security.enabled=false
+  #     - ES_JAVA_OPTS=-Xms512m -Xmx512m
+  #     - cluster.routing.allocation.disk.threshold_enabled=false
+  #   expose:
+  #     - "9200"
+  #   volumes:
+  #     - es_data:/usr/share/elasticsearch/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+  #     interval: 15s
+  #     timeout: 10s
+  #     retries: 10
+  #     start_period: 60s
+  #   mem_limit: 1g
+  #   networks:
+  #     - dmp-net
 
   # ============================================
-  # OpenMetadata - 数据治理 (不对外暴露端口)
+  # OpenMetadata - 已停用（Portal 直连 information_schema 替代）
   # ============================================
-  openmetadata-server:
-    image: docker.1ms.run/openmetadata/server:latest
-    container_name: dmp-om
-    restart: always
-    env_file: .env
-    environment:
-      ELASTICSEARCH_HOST: elasticsearch
-      ELASTICSEARCH_PORT: 9200
-      DB_DRIVER_CLASS: com.mysql.cj.jdbc.Driver
-      DB_SCHEME: mysql
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_USER: root
-      DB_USER_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      OM_DATABASE: openmetadata
-      OPENMETADATA_CLUSTER_NAME: dmp-cluster
-      AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
-      AUTHORIZER_REQUEST_FILTER: org.openmetadata.service.security.JwtFilter
-      AUTHENTICATION_PROVIDER: basic
-      AUTHORIZER_ADMIN_PRINCIPALS: "[admin]"
-      LOGIN_AUTH_PROVIDER: basic
-      OM_AUTH_JWTRS_PUBLIC_KEY_PATH: "/openmetadata/conf/public_key.der"
-      OM_AUTH_JWTRS_PRIVATE_KEY_PATH: "/openmetadata/conf/private_key.der"
-      OM_SIGNING_KEY: "abc123abc123abc123abc123abc123abc123abc123abc123"
-      MIGRATION_LIMIT_PARAM: "1200"
-    expose:
-      - "8585"
-    volumes:
-      - om_data:/opt/openmetadata
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-      mysql:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8585/healthcheck || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 15
-      start_period: 180s
-    mem_limit: 2g
-    networks:
-      - dmp-net
+  # openmetadata-server:
+  #   image: docker.1ms.run/openmetadata/server:latest
+  #   container_name: dmp-om
+  #   restart: always
+  #   env_file: .env
+  #   environment:
+  #     ELASTICSEARCH_HOST: elasticsearch
+  #     ELASTICSEARCH_PORT: 9200
+  #     DB_DRIVER_CLASS: com.mysql.cj.jdbc.Driver
+  #     DB_SCHEME: mysql
+  #     DB_HOST: mysql
+  #     DB_PORT: 3306
+  #     DB_USER: root
+  #     DB_USER_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+  #     OM_DATABASE: openmetadata
+  #     OPENMETADATA_CLUSTER_NAME: dmp-cluster
+  #     AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
+  #     AUTHORIZER_REQUEST_FILTER: org.openmetadata.service.security.JwtFilter
+  #     AUTHENTICATION_PROVIDER: basic
+  #     AUTHORIZER_ADMIN_PRINCIPALS: "[admin]"
+  #     LOGIN_AUTH_PROVIDER: basic
+  #     OM_AUTH_JWTRS_PUBLIC_KEY_PATH: "/openmetadata/conf/public_key.der"
+  #     OM_AUTH_JWTRS_PRIVATE_KEY_PATH: "/openmetadata/conf/private_key.der"
+  #     OM_SIGNING_KEY: "abc123abc123abc123abc123abc123abc123abc123abc123"
+  #     MIGRATION_LIMIT_PARAM: "1200"
+  #   expose:
+  #     - "8585"
+  #   volumes:
+  #     - om_data:/opt/openmetadata
+  #   depends_on:
+  #     elasticsearch:
+  #       condition: service_healthy
+  #     mysql:
+  #       condition: service_healthy
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -sf http://localhost:8585/healthcheck || exit 1"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 15
+  #     start_period: 180s
+  #   mem_limit: 2g
+  #   networks:
+  #     - dmp-net
 
   # ============================================
   # Portal Backend - FastAPI (不对外暴露端口)

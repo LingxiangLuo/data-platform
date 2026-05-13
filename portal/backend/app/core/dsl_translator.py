@@ -231,3 +231,125 @@ def translate_workflow(
         "taskRelationJson": json.dumps(relations, ensure_ascii=False),
         "locations": json.dumps(locations, ensure_ascii=False),
     }
+
+
+# ============================================================
+# DAG 模式翻译（支持并行分支和汇聚）
+# ============================================================
+
+def _topological_sort(nodes: List[Dict], edges: List[Dict]) -> List[str]:
+    """Kahn 算法拓扑排序，同时检测环"""
+    from collections import deque
+    node_ids = {n["id"] for n in nodes}
+    in_degree = {nid: 0 for nid in node_ids}
+    adj = {nid: [] for nid in node_ids}
+    for e in edges:
+        if e["source"] in node_ids and e["target"] in node_ids:
+            adj[e["source"]].append(e["target"])
+            in_degree[e["target"]] += 1
+    queue = deque([nid for nid, deg in in_degree.items() if deg == 0])
+    result = []
+    while queue:
+        nid = queue.popleft()
+        result.append(nid)
+        for child in adj[nid]:
+            in_degree[child] -= 1
+            if in_degree[child] == 0:
+                queue.append(child)
+    if len(result) != len(node_ids):
+        raise ValueError("DAG 中存在环，无法发布")
+    return result
+
+
+def build_task_relations_from_dag(
+    edges: List[Dict],
+    node_to_task_code: Dict[str, int],
+    nodes: List[Dict],
+) -> List[Dict[str, Any]]:
+    """DAG 结构 → DS taskRelationJson"""
+    node_ids = {n["id"] for n in nodes}
+    targets_with_incoming = {e["target"] for e in edges if e["source"] in node_ids and e["target"] in node_ids}
+    relations = []
+    # Root nodes（入度为 0）
+    for n in nodes:
+        if n["id"] not in targets_with_incoming:
+            relations.append({
+                "preTaskCode": 0,
+                "preTaskVersion": 0,
+                "postTaskCode": node_to_task_code[n["id"]],
+                "postTaskVersion": 0,
+                "name": "",
+                "conditionType": "NONE",
+                "conditionParams": {},
+            })
+    # 普通边
+    for e in edges:
+        if e["source"] in node_ids and e["target"] in node_ids:
+            relations.append({
+                "preTaskCode": node_to_task_code[e["source"]],
+                "preTaskVersion": 0,
+                "postTaskCode": node_to_task_code[e["target"]],
+                "postTaskVersion": 0,
+                "name": "",
+                "conditionType": "NONE",
+                "conditionParams": {},
+            })
+    return relations
+
+
+def build_locations_from_dag(
+    nodes: List[Dict],
+    node_to_task_code: Dict[str, int],
+) -> List[Dict[str, Any]]:
+    """直接使用前端保存的 position"""
+    return [
+        {"taskCode": node_to_task_code[n["id"]], "x": int(n["position"]["x"]), "y": int(n["position"]["y"])}
+        for n in nodes
+    ]
+
+
+def translate_workflow_dag(
+    workflow: Any,
+    components_by_id: Dict[int, Any],
+    task_codes: List[int],
+    datasource_lookup: Optional[Dict[int, Any]] = None,
+) -> Dict[str, Any]:
+    """DAG 版本: Workflow → DS Process Definition payload"""
+    dag = workflow.dag_json
+    nodes = dag["nodes"]
+    edges = dag.get("edges", [])
+
+    # 过滤 skip 节点及其关联边
+    active_nodes = [n for n in nodes if not n.get("skip", False)]
+    active_ids = {n["id"] for n in active_nodes}
+    active_edges = [e for e in edges if e["source"] in active_ids and e["target"] in active_ids]
+
+    # 环检测
+    _topological_sort(active_nodes, active_edges)
+
+    # 分配 task_code
+    node_to_task_code = {}
+    task_defs = []
+    for i, node in enumerate(active_nodes):
+        tcode = task_codes[i]
+        node_to_task_code[node["id"]] = tcode
+        comp = components_by_id.get(node["component_id"])
+        if not comp:
+            raise ValueError(f"组件 {node['component_id']} 不存在")
+        td = translate_component_to_task(
+            comp, tcode,
+            task_name=node.get("name") or comp.name,
+            datasource_lookup=datasource_lookup,
+        )
+        task_defs.append(td)
+
+    relations = build_task_relations_from_dag(active_edges, node_to_task_code, active_nodes)
+    locations = build_locations_from_dag(active_nodes, node_to_task_code)
+
+    return {
+        "name": workflow.name,
+        "description": workflow.description or "",
+        "taskDefinitionJson": json.dumps(task_defs, ensure_ascii=False),
+        "taskRelationJson": json.dumps(relations, ensure_ascii=False),
+        "locations": json.dumps(locations, ensure_ascii=False),
+    }

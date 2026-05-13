@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.ds_client import get_ds_client
-from app.core.dsl_translator import translate_workflow
+from app.core.dsl_translator import translate_workflow, translate_workflow_dag
 from app.models.workflow import Workflow
 from app.models.component import Component
 from app.models.datasource import DataSource
@@ -29,20 +29,36 @@ DELETABLE_STATUSES = {STATUS_DRAFT, STATUS_OFFLINE}
 # ===== Schemas =====
 class WorkflowStep(BaseModel):
     component_id: int
-    name: Optional[str] = None  # 步骤别名,默认取 component.name
+    name: Optional[str] = None
 
+class DagNode(BaseModel):
+    id: str
+    component_id: int
+    name: Optional[str] = None
+    position: Dict[str, float]  # {x, y}
+    skip: bool = False
+
+class DagEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+
+class DagPayload(BaseModel):
+    nodes: List[DagNode] = Field(default_factory=list)
+    edges: List[DagEdge] = Field(default_factory=list)
 
 class WorkflowCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     steps: List[WorkflowStep] = Field(default_factory=list)
+    dag: Optional[DagPayload] = None
     cron_expression: Optional[str] = None
-
 
 class WorkflowUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     steps: Optional[List[WorkflowStep]] = None
+    dag: Optional[DagPayload] = None
     cron_expression: Optional[str] = None
 
 
@@ -72,6 +88,7 @@ def _serialize(w: Workflow, db: Session) -> dict:
         "name": w.name,
         "description": w.description,
         "steps": enriched_steps,
+        "dag": w.dag_json,
         "cron_expression": w.cron_expression,
         "schedule_status": w.schedule_status,
         "status": w.status,
@@ -107,15 +124,22 @@ def _validate_steps(db: Session, steps: List[WorkflowStep]) -> List[Dict[str, An
 
 
 async def _sync_to_ds(db: Session, w: Workflow) -> tuple:
-    """把 workflow 翻译并同步到 DS
+    """把 workflow 翻译并同步到 DS（支持 DAG 和线性两种模式）"""
+    # 确定节点数量和组件列表
+    if w.dag_json and w.dag_json.get("nodes"):
+        dag_nodes = w.dag_json["nodes"]
+        active_nodes = [n for n in dag_nodes if not n.get("skip", False)]
+        if not active_nodes:
+            raise HTTPException(status_code=400, detail="DAG 中没有可执行的节点（全部被跳过）")
+        comp_ids = [n["component_id"] for n in active_nodes]
+        node_count = len(active_nodes)
+    else:
+        steps = w.steps_json or []
+        if not steps:
+            raise HTTPException(status_code=400, detail="工作流为空")
+        comp_ids = [s.get("component_id") for s in steps]
+        node_count = len(steps)
 
-    返回: (pd_code, schedule_id) — schedule_id 仅在配置了 cron 时返回
-    抛 HTTPException 表示 DS 同步失败
-    """
-    steps = w.steps_json or []
-    if not steps:
-        raise HTTPException(status_code=400, detail="工作流为空")
-    comp_ids = [s.get("component_id") for s in steps]
     comps = db.query(Component).filter(Component.id.in_(comp_ids)).all()
     comp_map = {c.id: c for c in comps}
     # 数据源映射 (SQL 组件需要)
@@ -130,12 +154,16 @@ async def _sync_to_ds(db: Session, w: Workflow) -> tuple:
         datasource_map = {d.id: d for d in dss}
 
     ds = get_ds_client()
-    task_codes = await ds.gen_task_codes(len(steps))
-    if not task_codes or len(task_codes) < len(steps):
+    task_codes = await ds.gen_task_codes(node_count)
+    if not task_codes or len(task_codes) < node_count:
         raise HTTPException(status_code=502, detail="DS 生成 task code 失败")
-    task_codes = [int(x) for x in task_codes[:len(steps)]]
+    task_codes = [int(x) for x in task_codes[:node_count]]
 
-    payload = translate_workflow(w, comp_map, task_codes, datasource_lookup=datasource_map)
+    # 选择翻译模式
+    if w.dag_json and w.dag_json.get("nodes"):
+        payload = translate_workflow_dag(w, comp_map, task_codes, datasource_lookup=datasource_map)
+    else:
+        payload = translate_workflow(w, comp_map, task_codes, datasource_lookup=datasource_map)
 
     # 已存在 ds_process_code → 更新;否则创建
     if w.ds_process_code:
@@ -199,10 +227,16 @@ def create_workflow(
     current_user: SysUser = Depends(get_current_user),
 ):
     steps_data = _validate_steps(db, req.steps)
+    dag_data = None
+    if req.dag and req.dag.nodes:
+        dag_data = {"nodes": [n.model_dump() for n in req.dag.nodes], "edges": [e.model_dump() for e in req.dag.edges]}
+        # 从 DAG 生成兼容的 steps_json（拓扑排序）
+        steps_data = [{"component_id": n.component_id, "name": n.name} for n in req.dag.nodes if not n.skip]
     w = Workflow(
         name=req.name,
         description=req.description,
         steps_json=steps_data,
+        dag_json=dag_data,
         cron_expression=req.cron_expression,
         schedule_status="OFFLINE",
         status=STATUS_DRAFT,
@@ -248,6 +282,13 @@ def update_workflow(
     if "steps" in updates:
         steps_data = _validate_steps(db, [WorkflowStep(**s) for s in updates["steps"]])
         w.steps_json = steps_data
+        structural_change = True
+    if "dag" in updates and updates["dag"]:
+        dag_raw = updates["dag"]
+        dag_data = {"nodes": dag_raw.get("nodes", []), "edges": dag_raw.get("edges", [])}
+        w.dag_json = dag_data
+        # 同步 steps_json
+        w.steps_json = [{"component_id": n["component_id"], "name": n.get("name")} for n in dag_data["nodes"] if not n.get("skip")]
         structural_change = True
     if structural_change:
         w.status = STATUS_DRAFT
@@ -300,11 +341,14 @@ def test_workflow(
     w = _get_or_404(db, wf_id)
     if w.status not in {STATUS_DRAFT, STATUS_TESTED}:
         raise HTTPException(status_code=400, detail=f"状态 {w.status} 下不允许测试")
-    steps = w.steps_json or []
-    if not steps:
+    # 从 DAG 或 steps 提取 component_id
+    if w.dag_json and w.dag_json.get("nodes"):
+        comp_ids = [n["component_id"] for n in w.dag_json["nodes"] if not n.get("skip")]
+    else:
+        steps = w.steps_json or []
+        comp_ids = [s.get("component_id") for s in steps]
+    if not comp_ids:
         raise HTTPException(status_code=400, detail="工作流为空,请先添加步骤")
-    # 校验所有 component 处于 online 状态
-    comp_ids = [s.get("component_id") for s in steps]
     comps = db.query(Component).filter(Component.id.in_(comp_ids)).all()
     comp_map = {c.id: c for c in comps}
     unpublished = []
@@ -449,3 +493,30 @@ async def schedule_offline(
     db.commit()
     db.refresh(w)
     return {"message": "调度已关闭", **_serialize(w, db)}
+
+
+# ===== 调度任务列表 =====
+@router.get("/scheduled")
+def list_scheduled_workflows(
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """返回所有配置了 cron 的工作流（调度任务页面用）"""
+    q = db.query(Workflow).filter(
+        Workflow.cron_expression.isnot(None),
+        Workflow.cron_expression != "",
+    ).order_by(Workflow.id.desc())
+    items = q.all()
+    result = []
+    for w in items:
+        item = _serialize(w, db)
+        # 计算下次执行时间
+        try:
+            from croniter import croniter
+            from datetime import datetime
+            cron = croniter(w.cron_expression, datetime.now())
+            item["next_fire_time"] = str(cron.get_next(datetime))
+        except Exception:
+            item["next_fire_time"] = None
+        result.append(item)
+    return {"items": result, "total": len(result)}

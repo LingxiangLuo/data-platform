@@ -38,8 +38,10 @@ const router = createRouter({
           meta: { title: '代码开发' },
         },
         {
-          path: 'python-dev',
-          redirect: '/sql-dev',
+          path: 'workflows/:id/edit',
+          name: 'WorkflowEditor',
+          component: () => import('../views/WorkflowEditor.vue'),
+          meta: { title: '编辑工作流', hideLayout: true },
         },
         {
           path: 'components',

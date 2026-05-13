@@ -187,6 +187,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { Message, Modal } from '@arco-design/web-vue'
 import {
   IconPlus, IconUp, IconDown, IconDelete,
@@ -221,6 +222,7 @@ interface Workflow {
   updated_at?: string
 }
 
+const router = useRouter()
 const loading = ref(false)
 const items = ref<Workflow[]>([])
 const total = ref(0)
@@ -367,23 +369,11 @@ function moveStep(idx: number, direction: number) {
 
 // ===== 操作 =====
 function openCreate() {
-  resetForm()
-  loadOnlineComponents()
-  isEditMode.value = false
-  readonlyMode.value = false
-  editingId.value = null
-  editorTitle.value = '新建工作流'
-  editorVisible.value = true
+  router.push('/workflows/new/edit')
 }
 
 function openEdit(w: Workflow) {
-  loadFormFromWf(w)
-  loadOnlineComponents()
-  isEditMode.value = true
-  readonlyMode.value = false
-  editingId.value = w.id
-  editorTitle.value = `编辑 - ${w.name}`
-  editorVisible.value = true
+  router.push(`/workflows/${w.id}/edit`)
 }
 
 function viewWf(w: Workflow) {
