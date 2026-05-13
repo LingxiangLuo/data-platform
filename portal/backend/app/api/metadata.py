@@ -165,6 +165,8 @@ def preview_table(
             query = f"SELECT * FROM `{table}` LIMIT {limit}"
 
         with engine.connect() as conn:
+            if t == "postgresql":
+                conn.execute(sa.text(f"SET search_path TO {ds.database_name}, public"))
             res = conn.execute(sa.text(query))
             columns = list(res.keys())
             raw_rows = res.fetchmany(limit)

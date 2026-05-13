@@ -53,10 +53,15 @@ def _connect(ds: DataSource, db_override: Optional[str] = None):
         )
     if t == "postgresql":
         import psycopg2
-        return psycopg2.connect(
+        conn = psycopg2.connect(
             host=ds.host, port=ds.port or 5432, user=ds.username,
             password=ds.password, dbname=database, connect_timeout=5,
         )
+        # 设置 search_path 到当前数据库 schema，确保表查询能找到
+        cur = conn.cursor()
+        cur.execute(f"SET search_path TO {database}, public")
+        cur.close()
+        return conn
     if t == "sqlserver":
         import pymssql
         return pymssql.connect(
