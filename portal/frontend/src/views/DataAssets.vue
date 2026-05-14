@@ -415,7 +415,12 @@ onMounted(loadDatasources)
   border-radius: 10px;
 }
 
-/* 覆盖 Arco tooltip 为白色背景 */
+/* 覆盖 Arco tooltip 为白色背景 — 多层穿透确保无深色残留 */
+:global(.light-badge-tooltip),
+:global(.light-badge-tooltip .arco-trigger-popup),
+:global(.light-badge-tooltip .arco-tooltip-popup) {
+  background: transparent !important;
+}
 :global(.light-badge-tooltip .arco-tooltip-content) {
   background: #fff !important;
   color: #1D2129 !important;
