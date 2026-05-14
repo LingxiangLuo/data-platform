@@ -140,6 +140,7 @@ def _serialize(c: Component) -> dict:
         "status_color": STATUS_COLORS.get(status, "#86909C"),
         "ds_task_code": c.ds_task_code,
         "folder_id": c.folder_id if hasattr(c, 'folder_id') else None,
+        "sort_order": c.sort_order if hasattr(c, 'sort_order') else 0,
         "code": (c.config_json or {}).get('sql') or (c.config_json or {}).get('script') or '',
         "datasource_id": (c.config_json or {}).get('datasource_id'),
         "created_at": str(c.created_at) if c.created_at else None,
@@ -214,7 +215,7 @@ def list_components(
     if status:
         q = q.filter(Component.status == status)
     total = q.count()
-    items = q.order_by(Component.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = q.order_by(Component.sort_order.asc(), Component.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return {"total": total, "items": [_serialize(c) for c in items]}
 
 
@@ -283,7 +284,7 @@ def list_folders(
     q = db.query(ComponentFolder)
     if folder_type:
         q = q.filter(ComponentFolder.type == folder_type)
-    items = q.order_by(ComponentFolder.id).all()
+    items = q.order_by(ComponentFolder.sort_order.asc(), ComponentFolder.id.asc()).all()
     return [{"id": f.id, "name": f.name, "type": f.type, "parent_id": f.parent_id} for f in items]
 
 
@@ -594,3 +595,90 @@ def set_component_status(
     db.commit()
     db.refresh(c)
     return {"message": f"状态已更新为 {STATUS_LABELS.get(new_status, new_status)}", **_serialize(c)}
+
+
+# ===== 移动与排序 =====
+
+class MoveComponentRequest(BaseModel):
+    folder_id: Optional[int] = None
+    sort_order: Optional[int] = None
+
+
+class ReorderItem(BaseModel):
+    id: int
+    sort_order: int
+
+
+class ReorderRequest(BaseModel):
+    orders: list[ReorderItem]
+
+
+class MoveFolderRequest(BaseModel):
+    parent_id: Optional[int] = None
+    sort_order: Optional[int] = None
+
+
+@router.put("/{comp_id}/move")
+def move_component(
+    comp_id: int,
+    req: MoveComponentRequest,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """移动组件到指定文件夹并/或更新排序"""
+    c = _get_or_404(db, comp_id)
+    if req.folder_id is not None:
+        if req.folder_id != 0:
+            f = db.query(ComponentFolder).filter(ComponentFolder.id == req.folder_id).first()
+            if not f:
+                raise HTTPException(status_code=404, detail="目标文件夹不存在")
+        c.folder_id = req.folder_id if req.folder_id != 0 else None
+    if req.sort_order is not None:
+        c.sort_order = req.sort_order
+    db.commit()
+    db.refresh(c)
+    return {"message": "移动成功", **_serialize(c)}
+
+
+@router.post("/reorder")
+def reorder_components(
+    req: ReorderRequest,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """批量更新组件排序"""
+    for item in req.orders:
+        c = db.query(Component).filter(Component.id == item.id).first()
+        if c:
+            c.sort_order = item.sort_order
+    db.commit()
+    return {"message": "排序已更新"}
+
+
+@router.put("/folders/{folder_id}/move")
+def move_folder(
+    folder_id: int,
+    req: MoveFolderRequest,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """移动文件夹到指定父文件夹并/或更新排序"""
+    f = db.query(ComponentFolder).filter(ComponentFolder.id == folder_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="文件夹不存在")
+    if req.parent_id is not None:
+        if req.parent_id != 0:
+            parent = db.query(ComponentFolder).filter(ComponentFolder.id == req.parent_id).first()
+            if not parent:
+                raise HTTPException(status_code=404, detail="目标父文件夹不存在")
+            depth = _folder_depth(db, req.parent_id)
+            if depth >= 2:
+                raise HTTPException(status_code=400, detail="最多支持 3 层嵌套")
+        f.parent_id = req.parent_id if req.parent_id != 0 else None
+        # 重新计算 depth
+        f.depth = _folder_depth(db, f.parent_id)
+    if req.sort_order is not None:
+        f.sort_order = req.sort_order
+    db.commit()
+    db.refresh(f)
+    return {"id": f.id, "name": f.name, "type": f.type, "parent_id": f.parent_id, "depth": f.depth}

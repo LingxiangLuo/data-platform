@@ -141,6 +141,42 @@ def _migrate_word_root_table():
 _migrate_word_root_table()
 
 
+def _migrate_component_sort_order():
+    """component 表按需新增 sort_order 列"""
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'component'"
+        )).fetchall()
+        existing = {r[0] for r in rows}
+        if 'sort_order' not in existing:
+            conn.execute(text(
+                "ALTER TABLE component ADD COLUMN sort_order INT NOT NULL DEFAULT 0 COMMENT '同文件夹内排序'"
+            ))
+            conn.commit()
+
+
+_migrate_component_sort_order()
+
+
+def _migrate_folder_sort_order():
+    """component_folder 表按需新增 sort_order 列"""
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'component_folder'"
+        )).fetchall()
+        existing = {r[0] for r in rows}
+        if 'sort_order' not in existing:
+            conn.execute(text(
+                "ALTER TABLE component_folder ADD COLUMN sort_order INT NOT NULL DEFAULT 0 COMMENT '同层级排序'"
+            ))
+            conn.commit()
+
+
+_migrate_folder_sort_order()
+
+
 # 确保管理员密码正确
 def _ensure_admin():
     from app.models.user import SysUser
