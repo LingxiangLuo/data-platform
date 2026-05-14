@@ -66,7 +66,15 @@ def list_tables_api(
             "datasource_name": ds.name,
             "database": ds.database_name,
             "total": len(raw_tables),
-            "tables": [{"name": t["name"], "comment": t.get("comment", "")} for t in raw_tables],
+            "tables": [
+                {
+                    "name": t["name"],
+                    "comment": t.get("comment", ""),
+                    "type": t.get("type", "BASE TABLE"),
+                    "rows": t.get("rows", 0),
+                }
+                for t in raw_tables
+            ],
         }
     except HTTPException:
         raise
