@@ -64,6 +64,7 @@
             <a-tabs v-model:active-key="detailTab" type="line" size="small">
               <a-tab-pane key="columns" title="字段定义" />
               <a-tab-pane key="preview" title="数据预览" />
+              <a-tab-pane key="quality" title="数据质量" />
             </a-tabs>
           </div>
 
@@ -80,10 +81,16 @@
             >
               <template #columns>
                 <a-table-column title="#" data-index="position" :width="60" />
-                <a-table-column title="字段名" data-index="name" :width="180">
+                <a-table-column title="字段名" data-index="name" :width="200">
                   <template #cell="{ record }">
-                    <span class="col-name">{{ record.name }}</span>
-                    <a-tag v-if="record.primary_key" color="orange" size="small" style="margin-left:6px;">PK</a-tag>
+                    <span class="col-name" :class="{ 'pk-highlight': record.primary_key }">{{ record.name }}</span>
+                    <span class="field-badges">
+                      <a-tag v-if="record.primary_key" color="#ff7d00" size="small" class="badge-pk">PK</a-tag>
+                      <a-tag v-if="!record.nullable" color="#f53f3f" size="small" class="badge-nn">NOTNULL</a-tag>
+                      <a-tag v-if="record.auto_increment" color="#165dff" size="small" class="badge-auto">AUTO</a-tag>
+                      <a-tag v-if="record.unique" color="#00b42a" size="small" class="badge-uq">UNIQUE</a-tag>
+                      <a-tag v-if="record.index" color="#86909c" size="small" class="badge-idx">IDX</a-tag>
+                    </span>
                   </template>
                 </a-table-column>
                 <a-table-column title="类型" data-index="type" :width="160">
@@ -125,7 +132,16 @@
               <table class="preview-table mono">
                 <thead>
                   <tr>
-                    <th v-for="c in preview.columns" :key="c">{{ c }}</th>
+                    <th v-for="c in preview.columns" :key="c" :class="{ 'pk-header': getColumnMeta(c)?.primary_key }">
+                      <span class="col-name" :class="{ 'pk-highlight': getColumnMeta(c)?.primary_key }">{{ c }}</span>
+                      <span class="field-badges">
+                        <a-tag v-if="getColumnMeta(c)?.primary_key" color="#ff7d00" size="small" class="badge-pk">PK</a-tag>
+                        <a-tag v-if="getColumnMeta(c) && !getColumnMeta(c).nullable" color="#f53f3f" size="small" class="badge-nn">NOTNULL</a-tag>
+                        <a-tag v-if="getColumnMeta(c)?.auto_increment" color="#165dff" size="small" class="badge-auto">AUTO</a-tag>
+                        <a-tag v-if="getColumnMeta(c)?.unique" color="#00b42a" size="small" class="badge-uq">UNIQUE</a-tag>
+                        <a-tag v-if="getColumnMeta(c)?.index" color="#86909c" size="small" class="badge-idx">IDX</a-tag>
+                      </span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -134,6 +150,113 @@
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          <!-- 数据质量 -->
+          <div v-show="detailTab === 'quality'">
+            <div v-if="qualityLoading" class="loading-state"><a-spin /></div>
+            <div v-else-if="!quality.columns?.length" class="empty-state">暂无质量数据</div>
+            <div v-else class="quality-panel">
+              <!-- 概览卡片 -->
+              <div class="quality-overview">
+                <div class="q-card q-score">
+                  <div class="q-val">{{ qualityScore }}</div>
+                  <div class="q-label">质量总分</div>
+                  <a-progress :percent="qualityScore" :stroke-width="6" size="small" :color="scoreColor" />
+                </div>
+                <div class="q-card">
+                  <div class="q-val text-green">{{ quality.columns.filter((c: any) => c.score >= 90).length }}</div>
+                  <div class="q-label">完整字段</div>
+                </div>
+                <div class="q-card">
+                  <div class="q-val text-red">{{ quality.columns.filter((c: any) => c.score < 90).length }}</div>
+                  <div class="q-label">问题字段</div>
+                </div>
+                <div class="q-card">
+                  <div class="q-val">{{ quality.total_rows.toLocaleString() }}</div>
+                  <div class="q-label">总行数</div>
+                </div>
+              </div>
+
+              <!-- 字段质量表格 -->
+              <a-table
+                :data="quality.columns"
+                :pagination="false"
+                :bordered="false"
+                size="small"
+                stripe
+              >
+                <template #columns>
+                  <a-table-column title="字段名" :width="200">
+                    <template #cell="{ record }">
+                      <span class="col-name" :class="{ 'pk-highlight': record.primary_key }">{{ record.name }}</span>
+                      <span class="field-badges">
+                        <a-tag v-if="record.primary_key" color="#ff7d00" size="small" class="badge-pk">PK</a-tag>
+                        <a-tag v-if="!record.nullable" color="#f53f3f" size="small" class="badge-nn">NOTNULL</a-tag>
+                        <a-tag v-if="record.auto_increment" color="#165dff" size="small" class="badge-auto">AUTO</a-tag>
+                        <a-tag v-if="record.unique" color="#00b42a" size="small" class="badge-uq">UNIQUE</a-tag>
+                        <a-tag v-if="record.index" color="#86909c" size="small" class="badge-idx">IDX</a-tag>
+                      </span>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="类型" :width="120">
+                    <template #cell="{ record }">
+                      <span class="mono">{{ record.type }}</span>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="空值率" :width="140">
+                    <template #cell="{ record }">
+                      <a-progress
+                        :percent="Math.round(record.null_rate * 100)"
+                        :stroke-width="4"
+                        size="small"
+                        :color="record.null_rate > 0.2 ? '#f53f3f' : record.null_rate > 0 ? '#ff7d00' : '#00b42a'"
+                      />
+                      <span class="rate-text">{{ (record.null_rate * 100).toFixed(1) }}%</span>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="重复率" :width="100">
+                    <template #cell="{ record }">
+                      <span :class="{ 'text-red': record.duplicate_rate > 0.1 }">{{ (record.duplicate_rate * 100).toFixed(1) }}%</span>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="统计信息" :width="200">
+                    <template #cell="{ record }">
+                      <span v-if="record.min != null" class="mini-stats">
+                        min:{{ record.min }} max:{{ record.max }}<span v-if="record.avg"> avg:{{ record.avg }}</span>
+                      </span>
+                      <span v-else class="mini-stats muted">—</span>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="评分" :width="80">
+                    <template #cell="{ record }">
+                      <span class="score-badge" :class="{ 'score-bad': record.score < 60, 'score-warn': record.score >= 60 && record.score < 90, 'score-good': record.score >= 90 }">
+                        {{ record.score }}
+                      </span>
+                    </template>
+                  </a-table-column>
+                  <a-table-column title="问题" >
+                    <template #cell="{ record }">
+                      <span v-if="!record.issues?.length" class="muted">✓ 正常</span>
+                      <span v-else class="issue-list">
+                        <a-tag v-for="(issue, i) in record.issues" :key="i" color="#f53f3f" size="small">{{ issue }}</a-tag>
+                      </span>
+                    </template>
+                  </a-table-column>
+                </template>
+              </a-table>
+
+              <!-- 异常摘要 -->
+              <div v-if="allIssues.length" class="quality-anomaly">
+                <div class="anomaly-title">⚠ 异常摘要</div>
+                <div class="anomaly-list">
+                  <div v-for="(item, i) in allIssues" :key="i" class="anomaly-item">
+                    <span class="anomaly-field">{{ item.field }}</span>
+                    <span class="anomaly-issues">{{ item.issues.join('；') }}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
           </div>
@@ -147,7 +270,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { IconRefresh, IconSearch, IconStorage } from '@arco-design/web-vue/es/icon'
-import { getDatasources, getMetadataTables, getMetadataColumns, getMetadataPreview } from '../api'
+import { getDatasources, getMetadataTables, getMetadataColumns, getMetadataPreview, getMetadataQuality } from '../api'
 
 const dsOptions = ref<{ label: string; value: number }[]>([])
 const dsId = ref<number | undefined>(undefined)
@@ -156,16 +279,41 @@ const tablesLoading = ref(false)
 const tableFilter = ref('')
 
 const selectedTable = ref<string | null>(null)
-const detailTab = ref<'columns' | 'preview'>('columns')
+const detailTab = ref<'columns' | 'preview' | 'quality'>('columns')
 const columns = ref<any[]>([])
 const columnsLoading = ref(false)
 const preview = ref<any>({ columns: [], rows: [] })
 const previewLoading = ref(false)
+const quality = ref<any>({ total_rows: 0, columns: [] })
+const qualityLoading = ref(false)
 
 const filteredTables = computed(() => {
   if (!tableFilter.value) return tables.value
   const kw = tableFilter.value.toLowerCase()
   return tables.value.filter(t => t.name.toLowerCase().includes(kw))
+})
+
+function getColumnMeta(colName: string) {
+  return columns.value.find((c: any) => c.name === colName)
+}
+
+const qualityScore = computed(() => {
+  if (!quality.value.columns?.length) return 0
+  const total = quality.value.columns.reduce((s: number, c: any) => s + c.score, 0)
+  return Math.round(total / quality.value.columns.length)
+})
+
+const scoreColor = computed(() => {
+  const s = qualityScore.value
+  if (s >= 90) return '#00b42a'
+  if (s >= 60) return '#ff7d00'
+  return '#f53f3f'
+})
+
+const allIssues = computed(() => {
+  return quality.value.columns
+    ?.filter((c: any) => c.issues?.length)
+    ?.map((c: any) => ({ field: c.name, issues: c.issues })) || []
 })
 
 async function loadDatasources() {
@@ -203,6 +351,7 @@ async function selectTable(name: string) {
   selectedTable.value = name
   detailTab.value = 'columns'
   preview.value = { columns: [], rows: [] }
+  quality.value = { total_rows: 0, columns: [] }
   columnsLoading.value = true
   try {
     const res: any = await getMetadataColumns(dsId.value!, name)
@@ -212,6 +361,22 @@ async function selectTable(name: string) {
     columns.value = []
   }
   columnsLoading.value = false
+}
+
+async function loadQuality() {
+  if (!dsId.value || !selectedTable.value) return
+  qualityLoading.value = true
+  try {
+    const res: any = await getMetadataQuality(dsId.value, selectedTable.value)
+    quality.value = {
+      total_rows: res.total_rows || 0,
+      columns: res.columns || [],
+    }
+  } catch (e: any) {
+    Message.error(e?.response?.data?.detail || '数据质量分析失败')
+    quality.value = { total_rows: 0, columns: [] }
+  }
+  qualityLoading.value = false
 }
 
 async function loadPreview() {
@@ -229,7 +394,10 @@ async function loadPreview() {
 
 // 切换到预览 tab 时自动加载
 import { watch } from 'vue'
-watch(detailTab, (v) => { if (v === 'preview' && selectedTable.value && !preview.value.columns?.length) loadPreview() })
+watch(detailTab, (v) => {
+  if (v === 'preview' && selectedTable.value && !preview.value.columns?.length) loadPreview()
+  if (v === 'quality' && selectedTable.value && !quality.value.columns?.length) loadQuality()
+})
 
 onMounted(loadDatasources)
 </script>
@@ -276,4 +444,44 @@ onMounted(loadDatasources)
 
 .loading-state, .empty-state { padding: 40px 0; text-align: center; color: #86909C; }
 .mono { font-family: 'JetBrains Mono', 'Menlo', monospace; }
+
+/* 字段角标 */
+.field-badges { display: inline-flex; gap: 4px; margin-left: 6px; flex-wrap: wrap; vertical-align: middle; }
+.field-badges .arco-tag { font-size: 10px; font-weight: 600; padding: 0 4px; height: 18px; line-height: 16px; border: none; }
+.badge-pk { background: #FFF7E8; color: #FF7D00; }
+.badge-nn { background: #FFECE8; color: #F53F3F; }
+.badge-auto { background: #E8F3FF; color: #165DFF; }
+.badge-uq { background: #E8FFEA; color: #00B42A; }
+.badge-idx { background: #F2F3F5; color: #86909C; }
+.pk-highlight { color: #FF7D00; font-weight: 600; }
+.pk-header { background: #FFF7E8 !important; }
+
+/* 数据质量 */
+.quality-panel { padding: 0 0 16px; }
+.quality-overview { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 16px 20px; border-bottom: 1px solid #F2F3F5; }
+.q-card { background: #F7F8FA; border-radius: 8px; padding: 14px 16px; text-align: center; }
+.q-val { font-size: 22px; font-weight: 700; color: #1D2129; line-height: 1.2; }
+.q-label { font-size: 12px; color: #86909C; margin-top: 4px; }
+.text-green { color: #00B42A; }
+.text-red { color: #F53F3F; }
+
+.rate-text { font-size: 11px; color: #86909C; margin-left: 6px; }
+.mini-stats { font-size: 11px; color: #4E5969; font-family: 'JetBrains Mono', monospace; }
+.mini-stats.muted { color: #C9CDD4; }
+
+.score-badge { display: inline-block; min-width: 32px; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 700; text-align: center; }
+.score-good { background: #E8FFEA; color: #00B42A; }
+.score-warn { background: #FFF7E8; color: #FF7D00; }
+.score-bad { background: #FFECE8; color: #F53F3F; }
+
+.issue-list { display: flex; gap: 4px; flex-wrap: wrap; }
+.issue-list .arco-tag { font-size: 10px; padding: 0 4px; height: 18px; line-height: 16px; }
+
+.quality-anomaly { margin: 16px 20px 0; padding: 14px 16px; background: #FFF7E8; border-radius: 8px; border: 1px solid #FFDFA8; }
+.anomaly-title { font-size: 13px; font-weight: 600; color: #FF7D00; margin-bottom: 8px; }
+.anomaly-list { display: flex; flex-direction: column; gap: 6px; }
+.anomaly-item { display: flex; gap: 8px; font-size: 12px; }
+.anomaly-field { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: #1D2129; min-width: 120px; }
+.anomaly-issues { color: #4E5969; }
+.muted { color: #C9CDD4; font-size: 12px; }
 </style>
