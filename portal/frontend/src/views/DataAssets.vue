@@ -140,7 +140,7 @@
                       <span class="col-name" :class="{ 'pk-highlight': getColumnMeta(c)?.primary_key }">{{ c }}</span>
                       <span class="field-badges preview-badges">
                         <template v-for="badge in [getBadge(getColumnMeta(c))]" :key="badge?.text">
-                          <a-tooltip v-if="badge" :mouse-enter-delay="0" :mouse-leave-delay="0">
+                          <a-popover v-if="badge" trigger="hover" :mouse-enter-delay="0" :mouse-leave-delay="0" content-class="badge-popover">
                             <template #content>
                               <div class="badge-tooltip">
                                 <span v-for="b in getAllBadges(getColumnMeta(c))" :key="b.text" class="mini-badge" :class="b.class">{{ b.label }}</span>
