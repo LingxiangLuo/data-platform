@@ -14,7 +14,7 @@ router = APIRouter(prefix="/datasources", tags=["数据源"])
 
 class DataSourceCreate(BaseModel):
     name: str
-    type: str  # mysql / sqlserver / postgresql
+    type: str  # mysql / postgresql / sqlserver / oracle / clickhouse / mongodb / redis / hive
     host: str
     port: int
     database_name: str
@@ -131,21 +131,8 @@ def test_connection(
     if not ds:
         raise HTTPException(status_code=404, detail="数据源不存在")
 
-    import pymysql
-    try:
-        if ds.type == "mysql":
-            conn = pymysql.connect(
-                host=ds.host, port=ds.port, user=ds.username,
-                password=ds.password, database=ds.database_name, connect_timeout=5,
-            )
-            conn.close()
-            ds.status = 1
-        else:
-            # SQLServer 等其他类型暂标记为可用
-            ds.status = 1
-        db.commit()
-        return {"message": "连接测试成功", "status": 1}
-    except Exception as e:
-        ds.status = 0
-        db.commit()
-        return {"message": f"连接测试失败: {str(e)}", "status": 0}
+    from app.core.db_adapter import test_connection as adapter_test
+    ok, msg = adapter_test(ds)
+    ds.status = 1 if ok else 0
+    db.commit()
+    return {"message": msg, "status": ds.status}

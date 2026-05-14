@@ -15,6 +15,9 @@ _READER_MAP = {
     "postgresql": "postgresqlreader",
     "oracle": "oraclereader",
     "sqlserver": "sqlserverreader",
+    "clickhouse": "clickhousereader",
+    "mongodb": "mongodbreader",
+    "hive": "hivereader",
 }
 
 _WRITER_MAP = {
@@ -22,6 +25,9 @@ _WRITER_MAP = {
     "postgresql": "postgresqlwriter",
     "oracle": "oraclewriter",
     "sqlserver": "sqlserverwriter",
+    "clickhouse": "clickhousewriter",
+    "mongodb": "mongodbwriter",
+    "hive": "hivewriter",
 }
 
 
@@ -36,6 +42,10 @@ def _jdbc_url(ds: DataSource) -> str:
         return f"jdbc:oracle:thin:@{ds.host}:{ds.port}:{ds.database_name}"
     if t == "sqlserver":
         return f"jdbc:sqlserver://{ds.host}:{ds.port};DatabaseName={ds.database_name}"
+    if t == "clickhouse":
+        return f"jdbc:clickhouse://{ds.host}:{ds.port}/{ds.database_name}"
+    if t == "hive":
+        return f"jdbc:hive2://{ds.host}:{ds.port}/{ds.database_name}"
     raise ValueError(f"不支持的数据源类型: {ds.type}")
 
 

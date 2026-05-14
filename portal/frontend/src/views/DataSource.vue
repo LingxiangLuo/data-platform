@@ -4,7 +4,7 @@
     <div class="glass-card page-header">
       <div>
         <h3 class="page-title">数据源管理</h3>
-        <p class="page-desc">管理 MySQL、SQLServer 等数据源连接</p>
+        <p class="page-desc">管理 MySQL、PostgreSQL、SQLServer、Oracle、ClickHouse 等数据源连接</p>
       </div>
       <a-button type="primary" @click="showModal()">
         <template #icon><icon-plus /></template>
@@ -53,10 +53,15 @@
         <a-row :gutter="16">
           <a-col :span="12">
             <a-form-item field="type" label="数据库类型" :rules="[{ required: true }]">
-              <a-select v-model="form.type" placeholder="选择类型">
+              <a-select v-model="form.type" placeholder="选择类型" @change="onTypeChange">
                 <a-option value="mysql">MySQL</a-option>
-                <a-option value="sqlserver">SQLServer</a-option>
                 <a-option value="postgresql">PostgreSQL</a-option>
+                <a-option value="sqlserver">SQLServer</a-option>
+                <a-option value="oracle">Oracle</a-option>
+                <a-option value="clickhouse">ClickHouse</a-option>
+                <a-option value="mongodb">MongoDB</a-option>
+                <a-option value="redis">Redis</a-option>
+                <a-option value="hive">Hive</a-option>
               </a-select>
             </a-form-item>
           </a-col>
@@ -111,7 +116,21 @@ const form = reactive({
   database_name: '', username: '', password: '', description: '',
 })
 
-const typeColors: Record<string, string> = { mysql: 'blue', sqlserver: 'purple', postgresql: 'cyan' }
+const typeColors: Record<string, string> = {
+  mysql: 'blue', postgresql: 'cyan', sqlserver: 'purple',
+  oracle: 'red', clickhouse: 'orange', mongodb: 'green',
+  redis: 'orangered', hive: 'gold',
+}
+
+const defaultPorts: Record<string, number> = {
+  mysql: 3306, postgresql: 5432, sqlserver: 1433,
+  oracle: 1521, clickhouse: 8123, mongodb: 27017,
+  redis: 6379, hive: 10000,
+}
+
+function onTypeChange(type: any) {
+  form.port = defaultPorts[String(type)] || 3306
+}
 
 const columns = [
   { title: '名称', dataIndex: 'name', width: 180, ellipsis: true, tooltip: true },

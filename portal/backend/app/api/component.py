@@ -163,11 +163,10 @@ def _run_sql(db: Session, datasource_id: int, sql: str):
     if not ds:
         raise HTTPException(404, "数据源不存在")
 
-    url = (
-        f"mysql+pymysql://{ds.username}:{ds.password}"
-        f"@{ds.host}:{ds.port}/{ds.database_name}?charset=utf8mb4"
-    )
-    engine = sa.create_engine(url, pool_pre_ping=True, connect_args={"connect_timeout": 10})
+    from app.core.db_adapter import sqlalchemy_url
+    url = sqlalchemy_url(ds)
+    connect_args = {"connect_timeout": 10} if (ds.type or "").lower() in ("mysql", "postgresql") else {}
+    engine = sa.create_engine(url, pool_pre_ping=True, connect_args=connect_args)
     start = time.time()
     try:
         with engine.connect() as conn:
