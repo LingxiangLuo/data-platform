@@ -23,7 +23,7 @@ jobs:
         run: |
           git remote add upstream https://github.com/barryLiu199/data-platform-mvp.git
           git fetch upstream main
-          git reset --hard upstream/main
+          git checkout -B main upstream/main
           git push origin main --force-with-lease
 
       - name: Merge main into dev
