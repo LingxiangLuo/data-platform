@@ -58,7 +58,7 @@
           <icon-storage style="font-size: 32px; color: #C9CDD4;" />
           <p>点击左侧选择一张表查看详情</p>
         </div>
-        <div v-else>
+        <div v-else style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
           <div class="detail-header">
             <h4 class="detail-title">{{ selectedTable }}</h4>
             <a-tabs v-model:active-key="detailTab" type="line" size="small">
@@ -67,7 +67,8 @@
             </a-tabs>
           </div>
 
-          <!-- 字段定义 -->
+          <div class="detail-body">
+            <!-- 字段定义 -->
           <div v-show="detailTab === 'columns'">
             <a-table
               :data="columns"
@@ -134,6 +135,7 @@
                 </tbody>
               </table>
             </div>
+          </div>
           </div>
         </div>
       </div>
@@ -256,7 +258,8 @@ onMounted(loadDatasources)
 .table-item-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #86909C; }
 .table-item-meta .comment { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
 
-.table-detail-card { padding: 0; min-height: 400px; }
+.table-detail-card { padding: 0; min-height: 400px; max-height: calc(100vh - 200px); display: flex; flex-direction: column; overflow: hidden; }
+.detail-body { flex: 1; overflow-y: auto; }
 .placeholder { text-align: center; padding: 60px 0; color: #86909C; }
 .placeholder p { margin-top: 8px; font-size: 13px; }
 .detail-header { padding: 16px 20px 0; border-bottom: 1px solid #F2F3F5; }
