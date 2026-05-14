@@ -415,18 +415,18 @@ onMounted(loadDatasources)
   border: none !important;
 }
 .badge-popover-body {
-  padding: 8px 10px;
+  padding: 4px 6px;
   display: flex;
-  gap: 6px;
+  gap: 4px;
   align-items: center;
 }
 .popover-tag {
   display: inline-block;
   font-size: 12px;
   font-weight: 500;
-  padding: 3px 8px;
-  border-radius: 10px;
-  line-height: 1.4;
+  padding: 2px 6px;
+  border-radius: 8px;
+  line-height: 1.3;
 }
 .popover-tag.badge-pk { background: #FFF3E8; color: #D46B08; }
 .popover-tag.badge-fk { background: #FFF0F6; color: #C41D7F; }
