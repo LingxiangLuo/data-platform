@@ -84,14 +84,16 @@
                   <template #cell="{ record }">
                     <span class="col-name" :class="{ 'pk-highlight': record.primary_key }">{{ record.name }}</span>
                     <span class="field-badges">
-                      <a-tooltip v-if="getBadge(record)" :mouse-enter-delay="0" :mouse-leave-delay="0">
-                        <template #content>
-                          <div class="badge-tooltip">
-                            <span v-for="b in getAllBadges(record)" :key="b.text" class="mini-badge" :class="b.class">{{ b.label }}</span>
-                          </div>
-                        </template>
-                        <span class="mini-badge" :class="getBadge(record).class">{{ getBadge(record).text }}</span>
-                      </a-tooltip>
+                      <template v-for="badge in [getBadge(record)]" :key="badge?.text">
+                        <a-tooltip v-if="badge" :mouse-enter-delay="0" :mouse-leave-delay="0">
+                          <template #content>
+                            <div class="badge-tooltip">
+                              <span v-for="b in getAllBadges(record)" :key="b.text" class="mini-badge" :class="b.class">{{ b.label }}</span>
+                            </div>
+                          </template>
+                          <span class="mini-badge" :class="badge.class">{{ badge.text }}</span>
+                        </a-tooltip>
+                      </template>
                     </span>
                   </template>
                 </a-table-column>
@@ -137,14 +139,16 @@
                     <th v-for="c in preview.columns" :key="c" :class="{ 'pk-header': getColumnMeta(c)?.primary_key }">
                       <span class="col-name" :class="{ 'pk-highlight': getColumnMeta(c)?.primary_key }">{{ c }}</span>
                       <span class="field-badges preview-badges">
-                        <a-tooltip v-if="getBadge(getColumnMeta(c))" :mouse-enter-delay="0" :mouse-leave-delay="0">
-                          <template #content>
-                            <div class="badge-tooltip">
-                              <span v-for="b in getAllBadges(getColumnMeta(c))" :key="b.text" class="mini-badge" :class="b.class">{{ b.label }}</span>
-                            </div>
-                          </template>
-                          <span class="mini-badge" :class="getBadge(getColumnMeta(c)).class">{{ getBadge(getColumnMeta(c)).text }}</span>
-                        </a-tooltip>
+                        <template v-for="badge in [getBadge(getColumnMeta(c))]" :key="badge?.text">
+                          <a-tooltip v-if="badge" :mouse-enter-delay="0" :mouse-leave-delay="0">
+                            <template #content>
+                              <div class="badge-tooltip">
+                                <span v-for="b in getAllBadges(getColumnMeta(c))" :key="b.text" class="mini-badge" :class="b.class">{{ b.label }}</span>
+                              </div>
+                            </template>
+                            <span class="mini-badge" :class="badge.class">{{ badge.text }}</span>
+                          </a-tooltip>
+                        </template>
                       </span>
                     </th>
                   </tr>
@@ -402,7 +406,15 @@ onMounted(loadDatasources)
 
 .muted { color: #C9CDD4; font-size: 12px; }
 
-/* tooltip 内彩色标签 */
-.badge-tooltip { display: flex; gap: 6px; align-items: center; }
-.badge-tooltip .mini-badge { font-size: 11px; padding: 2px 6px; height: 18px; line-height: 18px; border-radius: 3px; }
+/* tooltip 内彩色标签 — 透明背景+同色边框，适配深色 tooltip */
+.badge-tooltip { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
+.badge-tooltip .mini-badge {
+  font-size: 12px;
+  padding: 1px 8px;
+  height: auto;
+  line-height: 1.5;
+  border-radius: 10px;
+  background: transparent !important;
+  border: 1px solid currentColor;
+}
 </style>

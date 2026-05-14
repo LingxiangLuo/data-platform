@@ -189,6 +189,7 @@ async function handleImport(option: any) {
     Message.success(`导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条`)
     loadData()
   } catch (e: any) { Message.error(e?.response?.data?.detail || '导入失败') }
+  return { abort: () => {} }
 }
 
 let suggestTimer: any = null
