@@ -85,7 +85,7 @@
                     <span class="col-name" :class="{ 'pk-highlight': record.primary_key }">{{ record.name }}</span>
                     <span class="field-badges">
                       <template v-for="badge in [getBadge(record)]" :key="badge?.text">
-                        <a-tooltip v-if="badge" :mouse-enter-delay="0" :mouse-leave-delay="0">
+                        <a-tooltip v-if="badge" :mouse-enter-delay="0" :mouse-leave-delay="0" popup-class="light-badge-tooltip">
                           <template #content>
                             <div class="badge-tooltip">
                               <span v-for="b in getAllBadges(record)" :key="b.text" class="mini-badge" :class="b.class">{{ b.label }}</span>
@@ -406,15 +406,25 @@ onMounted(loadDatasources)
 
 .muted { color: #C9CDD4; font-size: 12px; }
 
-/* tooltip 内彩色标签 — 透明背景+同色边框，适配深色 tooltip */
 .badge-tooltip { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
 .badge-tooltip .mini-badge {
   font-size: 12px;
-  padding: 1px 8px;
+  padding: 2px 8px;
   height: auto;
   line-height: 1.5;
   border-radius: 10px;
-  background: transparent !important;
-  border: 1px solid currentColor;
+}
+
+/* 覆盖 Arco tooltip 为白色背景 */
+:global(.light-badge-tooltip .arco-tooltip-content) {
+  background: #fff !important;
+  color: #1D2129 !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12) !important;
+  border-radius: 6px !important;
+  padding: 6px 10px !important;
+}
+:global(.light-badge-tooltip .arco-tooltip-popup-arrow),
+:global(.light-badge-tooltip .arco-trigger-popup-arrow) {
+  background: #fff !important;
 }
 </style>
