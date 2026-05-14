@@ -81,15 +81,15 @@
             >
               <template #columns>
                 <a-table-column title="#" data-index="position" :width="60" />
-                <a-table-column title="字段名" data-index="name" :width="200">
+                <a-table-column title="字段名" data-index="name" :width="220">
                   <template #cell="{ record }">
                     <span class="col-name" :class="{ 'pk-highlight': record.primary_key }">{{ record.name }}</span>
                     <span class="field-badges">
-                      <a-tag v-if="record.primary_key" color="#ff7d00" size="small" class="badge-pk">PK</a-tag>
-                      <a-tag v-if="!record.nullable" color="#f53f3f" size="small" class="badge-nn">NOTNULL</a-tag>
-                      <a-tag v-if="record.auto_increment" color="#165dff" size="small" class="badge-auto">AUTO</a-tag>
-                      <a-tag v-if="record.unique" color="#00b42a" size="small" class="badge-uq">UNIQUE</a-tag>
-                      <a-tag v-if="record.index" color="#86909c" size="small" class="badge-idx">IDX</a-tag>
+                      <span v-if="record.primary_key" class="mini-badge badge-pk" title="主键">P</span>
+                      <span v-if="!record.nullable" class="mini-badge badge-nn" title="非空">N</span>
+                      <span v-if="record.auto_increment" class="mini-badge badge-auto" title="自增">A</span>
+                      <span v-if="record.unique" class="mini-badge badge-uq" title="唯一">U</span>
+                      <span v-if="record.index" class="mini-badge badge-idx" title="索引">I</span>
                     </span>
                   </template>
                 </a-table-column>
@@ -134,12 +134,12 @@
                   <tr>
                     <th v-for="c in preview.columns" :key="c" :class="{ 'pk-header': getColumnMeta(c)?.primary_key }">
                       <span class="col-name" :class="{ 'pk-highlight': getColumnMeta(c)?.primary_key }">{{ c }}</span>
-                      <span class="field-badges">
-                        <a-tag v-if="getColumnMeta(c)?.primary_key" color="#ff7d00" size="small" class="badge-pk">PK</a-tag>
-                        <a-tag v-if="getColumnMeta(c) && !getColumnMeta(c).nullable" color="#f53f3f" size="small" class="badge-nn">NOTNULL</a-tag>
-                        <a-tag v-if="getColumnMeta(c)?.auto_increment" color="#165dff" size="small" class="badge-auto">AUTO</a-tag>
-                        <a-tag v-if="getColumnMeta(c)?.unique" color="#00b42a" size="small" class="badge-uq">UNIQUE</a-tag>
-                        <a-tag v-if="getColumnMeta(c)?.index" color="#86909c" size="small" class="badge-idx">IDX</a-tag>
+                      <span class="field-badges preview-badges">
+                        <span v-if="getColumnMeta(c)?.primary_key" class="mini-badge badge-pk" title="主键">P</span>
+                        <span v-if="getColumnMeta(c) && !getColumnMeta(c).nullable" class="mini-badge badge-nn" title="非空">N</span>
+                        <span v-if="getColumnMeta(c)?.auto_increment" class="mini-badge badge-auto" title="自增">A</span>
+                        <span v-if="getColumnMeta(c)?.unique" class="mini-badge badge-uq" title="唯一">U</span>
+                        <span v-if="getColumnMeta(c)?.index" class="mini-badge badge-idx" title="索引">I</span>
                       </span>
                     </th>
                   </tr>
@@ -188,15 +188,15 @@
                 stripe
               >
                 <template #columns>
-                  <a-table-column title="字段名" :width="200">
+                  <a-table-column title="字段名" :width="220">
                     <template #cell="{ record }">
                       <span class="col-name" :class="{ 'pk-highlight': record.primary_key }">{{ record.name }}</span>
                       <span class="field-badges">
-                        <a-tag v-if="record.primary_key" color="#ff7d00" size="small" class="badge-pk">PK</a-tag>
-                        <a-tag v-if="!record.nullable" color="#f53f3f" size="small" class="badge-nn">NOTNULL</a-tag>
-                        <a-tag v-if="record.auto_increment" color="#165dff" size="small" class="badge-auto">AUTO</a-tag>
-                        <a-tag v-if="record.unique" color="#00b42a" size="small" class="badge-uq">UNIQUE</a-tag>
-                        <a-tag v-if="record.index" color="#86909c" size="small" class="badge-idx">IDX</a-tag>
+                        <span v-if="record.primary_key" class="mini-badge badge-pk" title="主键">P</span>
+                        <span v-if="!record.nullable" class="mini-badge badge-nn" title="非空">N</span>
+                        <span v-if="record.auto_increment" class="mini-badge badge-auto" title="自增">A</span>
+                        <span v-if="record.unique" class="mini-badge badge-uq" title="唯一">U</span>
+                        <span v-if="record.index" class="mini-badge badge-idx" title="索引">I</span>
                       </span>
                     </template>
                   </a-table-column>
@@ -446,15 +446,28 @@ onMounted(loadDatasources)
 .mono { font-family: 'JetBrains Mono', 'Menlo', monospace; }
 
 /* 字段角标 */
-.field-badges { display: inline-flex; gap: 4px; margin-left: 6px; flex-wrap: wrap; vertical-align: middle; }
-.field-badges .arco-tag { font-size: 10px; font-weight: 600; padding: 0 4px; height: 18px; line-height: 16px; border: none; }
-.badge-pk { background: #FFF7E8; color: #FF7D00; }
-.badge-nn { background: #FFECE8; color: #F53F3F; }
-.badge-auto { background: #E8F3FF; color: #165DFF; }
-.badge-uq { background: #E8FFEA; color: #00B42A; }
-.badge-idx { background: #F2F3F5; color: #86909C; }
-.pk-highlight { color: #FF7D00; font-weight: 600; }
+.field-badges { display: inline-flex; gap: 2px; margin-left: 4px; vertical-align: text-bottom; flex-wrap: nowrap; }
+.mini-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 0 3px;
+  height: 13px;
+  line-height: 13px;
+  border-radius: 2px;
+  cursor: default;
+}
+.badge-pk { background: #FFF3E8; color: #D46B08; }
+.badge-nn { background: #F5F5F5; color: #8C8C8C; }
+.badge-auto { background: #E6F4FF; color: #0958D9; }
+.badge-uq { background: #E8FFEA; color: #389E0D; }
+.badge-idx { background: #F5F5F5; color: #BFBFBF; }
+.pk-highlight { color: #D46B08; font-weight: 600; }
 .pk-header { background: #FFF7E8 !important; }
+
+/* 预览表格中的角标更小 */
+.preview-badges { margin-left: 2px; gap: 1px; }
+.preview-badges .mini-badge { font-size: 8px; padding: 0 2px; height: 11px; line-height: 11px; }
 
 /* 数据质量 */
 .quality-panel { padding: 0 0 16px; }
