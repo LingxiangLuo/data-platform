@@ -233,50 +233,60 @@ def list_tables(ds: DataSource, schema: Optional[str] = None) -> List[Dict[str, 
         if t == "mysql":
             cur = conn.cursor()
             cur.execute(
-                "SELECT TABLE_NAME, TABLE_COMMENT FROM information_schema.TABLES "
+                "SELECT TABLE_NAME, TABLE_COMMENT, TABLE_TYPE, COALESCE(TABLE_ROWS, 0) "
+                "FROM information_schema.TABLES "
                 "WHERE TABLE_SCHEMA=%s ORDER BY TABLE_NAME", (db,),
             )
-            return [{"name": r[0], "comment": r[1] or ""} for r in cur.fetchall()]
+            return [{"name": r[0], "comment": r[1] or "", "type": r[2] or "BASE TABLE", "rows": int(r[3] or 0)} for r in cur.fetchall()]
         if t == "postgresql":
             cur = conn.cursor()
             cur.execute(
-                "SELECT t.table_schema, t.table_name, d.description "
+                "SELECT t.table_schema, t.table_name, d.description, t.table_type, "
+                "COALESCE(c.reltuples::bigint, 0) "
                 "FROM information_schema.tables t "
                 "LEFT JOIN pg_catalog.pg_class c ON c.relname = t.table_name "
                 "LEFT JOIN pg_catalog.pg_description d ON d.objoid = c.oid AND d.objsubid = 0 "
                 "WHERE t.table_schema NOT IN ('pg_catalog','information_schema') ORDER BY t.table_name"
             )
             return [
-                {"name": f"{r[0]}.{r[1]}" if r[0] != "public" else r[1], "comment": r[2] or ""}
+                {
+                    "name": f"{r[0]}.{r[1]}" if r[0] != "public" else r[1],
+                    "comment": r[2] or "",
+                    "type": "BASE TABLE" if r[3] == "BASE TABLE" else (r[3] or "BASE TABLE"),
+                    "rows": int(r[4] or 0),
+                }
                 for r in cur.fetchall()
             ]
         if t == "sqlserver":
             cur = conn.cursor()
             cur.execute(
-                "SELECT TABLE_NAME FROM information_schema.TABLES "
+                "SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES "
                 "WHERE TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME"
             )
-            return [{"name": r[0], "comment": ""} for r in cur.fetchall()]
+            return [{"name": r[0], "comment": "", "type": r[1] or "BASE TABLE", "rows": 0} for r in cur.fetchall()]
         if t == "oracle":
             cur = conn.cursor()
             cur.execute(
                 "SELECT table_name, comments FROM all_tab_comments "
                 "WHERE owner=:1 ORDER BY table_name", (db.upper(),),
             )
-            return [{"name": r[0], "comment": r[1] or ""} for r in cur.fetchall()]
+            return [{"name": r[0], "comment": r[1] or "", "type": "BASE TABLE", "rows": 0} for r in cur.fetchall()]
         if t == "clickhouse":
             res = conn.execute(
-                "SELECT name, comment FROM system.tables WHERE database=%(db)s ORDER BY name",
+                "SELECT name, comment, total_rows FROM system.tables WHERE database=%(db)s ORDER BY name",
                 {"db": db},
             )
-            return [{"name": r[0], "comment": r[1] or ""} for r in res]
+            return [{"name": r[0], "comment": r[1] or "", "type": "BASE TABLE", "rows": int(r[2] or 0)} for r in res]
         if t == "mongodb":
             mdb = conn[db]
-            return [{"name": n, "comment": ""} for n in mdb.list_collection_names()]
+            return [
+                {"name": n, "comment": "", "type": "COLLECTION", "rows": mdb[n].estimated_document_count()}
+                for n in mdb.list_collection_names()
+            ]
         if t == "hive":
             cur = conn.cursor()
             cur.execute("SHOW TABLES")
-            return [{"name": r[0], "comment": ""} for r in cur.fetchall()]
+            return [{"name": r[0], "comment": "", "type": "BASE TABLE", "rows": 0} for r in cur.fetchall()]
         raise ValueError(f"不支持列出表: {t}")
     finally:
         try:
