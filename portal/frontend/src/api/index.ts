@@ -112,6 +112,7 @@ export const getMetadataTables = (datasource_id: number, keyword?: string, limit
   api.get('/metadata/tables', { params: { datasource_id, keyword, limit } })
 export const getMetadataColumns = (datasource_id: number, table: string) => api.get('/metadata/columns', { params: { datasource_id, table } })
 export const getMetadataPreview = (datasource_id: number, table: string, limit = 10) => api.get('/metadata/preview', { params: { datasource_id, table, limit } })
+export const getMetadataQuality = (datasource_id: number, table: string) => api.get('/metadata/quality', { params: { datasource_id, table } })
 export const generateDDL = (data: { datasource_id: number; target_table: string; columns: any[] }) =>
   api.post('/metadata/generate-ddl', data)
 export const executeDDL = (data: { datasource_id: number; ddl: string }) =>

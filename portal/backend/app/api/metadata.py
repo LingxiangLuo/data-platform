@@ -487,3 +487,253 @@ def get_lineage(
         "edges": unique_edges,
     }
 
+
+# ===== 数据质量 =====
+@router.get("/quality")
+def table_quality(
+    datasource_id: int = Query(...),
+    table: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """表级数据质量分析（支持 MySQL / PostgreSQL）"""
+    ds = _get_ds_or_404(db, datasource_id)
+    if not all(part.replace("_", "").isalnum() for part in table.split(".")):
+        raise HTTPException(status_code=400, detail="表名格式非法")
+
+    t = (ds.type or "").lower()
+    if t not in ("mysql", "postgresql"):
+        raise HTTPException(status_code=400, detail="当前仅支持 MySQL / PostgreSQL 的数据质量分析")
+
+    conn = None
+    try:
+        from app.core.db_adapter import _connect
+        conn = _connect(ds)
+        cur = conn.cursor()
+
+        db_name = ds.database_name
+        # 支持 schema.table 格式
+        schema = None
+        tbl = table
+        if "." in table:
+            schema, tbl = table.split(".", 1)
+
+        # 1. 获取字段元数据（含 PK / INDEX / AUTO）
+        columns_meta = {}
+        if t == "mysql":
+            cur.execute(
+                "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, EXTRA "
+                "FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s "
+                "ORDER BY ORDINAL_POSITION",
+                (db_name, tbl),
+            )
+            for r in cur.fetchall():
+                columns_meta[r[0]] = {
+                    "type": r[1],
+                    "nullable": r[2] == "YES",
+                    "primary_key": r[3] == "PRI",
+                    "unique": r[3] == "UNI",
+                    "index": r[3] == "MUL",
+                    "auto_increment": "auto_increment" in (r[4] or ""),
+                }
+        else:  # postgresql
+            # 基础字段信息
+            cur.execute(
+                "SELECT column_name, data_type, is_nullable "
+                "FROM information_schema.columns "
+                "WHERE table_schema=%s AND table_name=%s "
+                "ORDER BY ordinal_position",
+                (schema or db_name, tbl),
+            )
+            for r in cur.fetchall():
+                columns_meta[r[0]] = {
+                    "type": r[1],
+                    "nullable": r[2] == "YES",
+                    "primary_key": False,
+                    "unique": False,
+                    "index": False,
+                    "auto_increment": False,
+                }
+            # 主键
+            cur.execute(
+                "SELECT a.attname FROM pg_index i "
+                "JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=ANY(i.indkey) "
+                "WHERE i.indrelid=%s::regclass AND i.indisprimary",
+                (table,),
+            )
+            for r in cur.fetchall():
+                if r[0] in columns_meta:
+                    columns_meta[r[0]]["primary_key"] = True
+            # 唯一索引
+            cur.execute(
+                "SELECT a.attname FROM pg_index i "
+                "JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=ANY(i.indkey) "
+                "WHERE i.indrelid=%s::regclass AND i.indisunique AND NOT i.indisprimary",
+                (table,),
+            )
+            for r in cur.fetchall():
+                if r[0] in columns_meta:
+                    columns_meta[r[0]]["unique"] = True
+            # 普通索引
+            cur.execute(
+                "SELECT a.attname FROM pg_index i "
+                "JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=ANY(i.indkey) "
+                "WHERE i.indrelid=%s::regclass AND NOT i.indisunique AND NOT i.indisprimary",
+                (table,),
+            )
+            for r in cur.fetchall():
+                if r[0] in columns_meta:
+                    columns_meta[r[0]]["index"] = True
+            # serial / identity
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=%s AND table_name=%s "
+                "AND is_identity='YES'",
+                (schema or db_name, tbl),
+            )
+            for r in cur.fetchall():
+                if r[0] in columns_meta:
+                    columns_meta[r[0]]["auto_increment"] = True
+
+        if not columns_meta:
+            raise HTTPException(status_code=404, detail=f"表 {table} 不存在或无字段")
+
+        # 2. 获取总行数
+        if t == "mysql":
+            cur.execute("SELECT COUNT(*) FROM `%s`" % tbl)
+        else:
+            if schema:
+                cur.execute('SELECT COUNT(*) FROM "%s"."%s"' % (schema, tbl))
+            else:
+                cur.execute('SELECT COUNT(*) FROM "%s"' % tbl)
+        total_rows = cur.fetchone()[0] or 0
+
+        # 3. 对每个字段执行质量分析
+        col_list = []
+        for col_name, meta in columns_meta.items():
+            col_type = meta["type"].lower()
+            is_numeric = any(k in col_type for k in ("int", "float", "double", "decimal", "numeric", "real", "serial", "money"))
+            is_date = any(k in col_type for k in ("date", "time", "timestamp", "year"))
+
+            null_count = 0
+            distinct_count = 0
+            min_val = None
+            max_val = None
+            avg_val = None
+            issues = []
+
+            if total_rows > 0:
+                if t == "mysql":
+                    # NULL 和 DISTINCT
+                    cur.execute(
+                        "SELECT COUNT(*) - COUNT(`%s`), COUNT(DISTINCT `%s`) FROM `%s`"
+                        % (col_name, col_name, tbl)
+                    )
+                    row = cur.fetchone()
+                    null_count = row[0] or 0
+                    distinct_count = row[1] or 0
+
+                    # 数值统计
+                    if is_numeric:
+                        cur.execute(
+                            "SELECT MIN(`%s`), MAX(`%s`), AVG(`%s`) FROM `%s`"
+                            % (col_name, col_name, col_name, tbl)
+                        )
+                        row = cur.fetchone()
+                        min_val = str(row[0]) if row[0] is not None else None
+                        max_val = str(row[1]) if row[1] is not None else None
+                        avg_val = str(round(float(row[2]), 2)) if row[2] is not None else None
+
+                else:  # postgresql
+                    # NULL 和 DISTINCT
+                    if schema:
+                        cur.execute(
+                            'SELECT COUNT(*) - COUNT("%s"), COUNT(DISTINCT "%s") '
+                            'FROM "%s"."%s"' % (col_name, col_name, schema, tbl)
+                        )
+                    else:
+                        cur.execute(
+                            'SELECT COUNT(*) - COUNT("%s"), COUNT(DISTINCT "%s") '
+                            'FROM "%s"' % (col_name, col_name, tbl)
+                        )
+                    row = cur.fetchone()
+                    null_count = row[0] or 0
+                    distinct_count = row[1] or 0
+
+                    # 数值统计
+                    if is_numeric:
+                        if schema:
+                            cur.execute(
+                                'SELECT MIN("%s"), MAX("%s"), AVG("%s") '
+                                'FROM "%s"."%s"' % (col_name, col_name, col_name, schema, tbl)
+                            )
+                        else:
+                            cur.execute(
+                                'SELECT MIN("%s"), MAX("%s"), AVG("%s") '
+                                'FROM "%s"' % (col_name, col_name, col_name, tbl)
+                            )
+                        row = cur.fetchone()
+                        min_val = str(row[0]) if row[0] is not None else None
+                        max_val = str(row[1]) if row[1] is not None else None
+                        avg_val = str(round(float(row[2]), 2)) if row[2] is not None else None
+
+            # 计算评分和发现问题
+            score = 100
+            if null_count > 0:
+                null_rate = null_count / total_rows if total_rows else 0
+                score -= int(null_rate * 30)
+                if null_rate > 0.2:
+                    issues.append(f"NULL {null_count}行 ({int(null_rate*100)}%)")
+                elif null_rate > 0:
+                    issues.append(f"NULL {null_count}行")
+
+            duplicate_count = total_rows - distinct_count
+            if duplicate_count > 0 and not meta["primary_key"]:
+                dup_rate = duplicate_count / total_rows if total_rows else 0
+                score -= int(dup_rate * 20)
+                if dup_rate > 0.1:
+                    issues.append(f"重复 {duplicate_count}行 ({int(dup_rate*100)}%)")
+
+            if meta["primary_key"] and distinct_count != total_rows:
+                score -= 20
+                issues.append(f"主键不唯一 {total_rows - distinct_count}行")
+
+            col_list.append({
+                "name": col_name,
+                "type": meta["type"],
+                "nullable": meta["nullable"],
+                "primary_key": meta["primary_key"],
+                "unique": meta["unique"],
+                "index": meta["index"],
+                "auto_increment": meta["auto_increment"],
+                "total_rows": total_rows,
+                "null_count": null_count,
+                "null_rate": round(null_count / total_rows, 4) if total_rows else 0,
+                "distinct_count": distinct_count,
+                "duplicate_count": duplicate_count,
+                "duplicate_rate": round(duplicate_count / total_rows, 4) if total_rows else 0,
+                "min": min_val,
+                "max": max_val,
+                "avg": avg_val,
+                "score": max(0, score),
+                "issues": issues,
+            })
+
+        conn.close()
+        return {
+            "datasource_id": ds.id,
+            "table": table,
+            "total_rows": total_rows,
+            "columns": col_list,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        raise HTTPException(status_code=502, detail=f"数据质量分析失败: {e}")
+
