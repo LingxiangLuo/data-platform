@@ -89,16 +89,151 @@ def list_columns_api(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """列出某张表的字段（支持多种数据库）"""
+    """列出某张表的字段（支持多种数据库），含主键/唯一/索引/外键/自增标记"""
     ds = _get_ds_or_404(db, datasource_id)
-    # 允许 schema.table 格式
     if not all(part.replace("_", "").isalnum() for part in table.split(".")):
         raise HTTPException(status_code=400, detail="表名格式非法")
+
+    t = (ds.type or "").lower()
+    schema = None
+    tbl = table
+    if "." in table:
+        schema, tbl = table.split(".", 1)
+    db_name = schema or ds.database_name
+
+    conn = None
     try:
-        from app.core.db_adapter import list_columns as adapter_list_columns
-        cols = adapter_list_columns(ds, table)
-        if not cols:
-            raise HTTPException(status_code=404, detail=f"表 {table} 不存在")
+        from app.core.db_adapter import _connect
+        conn = _connect(ds)
+        cur = conn.cursor()
+
+        columns = []
+        if t == "mysql":
+            cur.execute(
+                "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, EXTRA, COLUMN_COMMENT "
+                "FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s ORDER BY ORDINAL_POSITION",
+                (db_name, tbl),
+            )
+            for r in cur.fetchall():
+                columns.append({
+                    "name": r[0],
+                    "type": r[1],
+                    "nullable": r[2] == "YES",
+                    "primary_key": r[3] == "PRI",
+                    "unique": r[3] == "UNI",
+                    "index": r[3] == "MUL",
+                    "auto_increment": "auto_increment" in (r[4] or ""),
+                    "foreign_key": False,
+                    "comment": r[5] or "",
+                })
+            # 外键
+            cur.execute(
+                "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE "
+                "WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s AND REFERENCED_TABLE_NAME IS NOT NULL",
+                (db_name, tbl),
+            )
+            fk_cols = {r[0] for r in cur.fetchall()}
+            for c in columns:
+                if c["name"] in fk_cols:
+                    c["foreign_key"] = True
+
+        elif t == "postgresql":
+            cur.execute(
+                "SELECT column_name, data_type, is_nullable "
+                "FROM information_schema.columns "
+                "WHERE table_schema=%s AND table_name=%s ORDER BY ordinal_position",
+                (db_name, tbl),
+            )
+            for r in cur.fetchall():
+                columns.append({
+                    "name": r[0],
+                    "type": r[1],
+                    "nullable": r[2] == "YES",
+                    "primary_key": False,
+                    "unique": False,
+                    "index": False,
+                    "auto_increment": False,
+                    "foreign_key": False,
+                    "comment": "",
+                })
+            col_map = {c["name"]: c for c in columns}
+            # 主键
+            cur.execute(
+                "SELECT kcu.column_name FROM information_schema.table_constraints tc "
+                "JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name "
+                "AND tc.table_schema=kcu.table_schema WHERE tc.constraint_type='PRIMARY KEY' "
+                "AND tc.table_schema=%s AND tc.table_name=%s",
+                (db_name, tbl),
+            )
+            for r in cur.fetchall():
+                if r[0] in col_map:
+                    col_map[r[0]]["primary_key"] = True
+            # 唯一
+            cur.execute(
+                "SELECT kcu.column_name FROM information_schema.table_constraints tc "
+                "JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name "
+                "AND tc.table_schema=kcu.table_schema WHERE tc.constraint_type='UNIQUE' "
+                "AND tc.table_schema=%s AND tc.table_name=%s",
+                (db_name, tbl),
+            )
+            for r in cur.fetchall():
+                if r[0] in col_map:
+                    col_map[r[0]]["unique"] = True
+            # 外键
+            cur.execute(
+                "SELECT kcu.column_name FROM information_schema.table_constraints tc "
+                "JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name "
+                "AND tc.table_schema=kcu.table_schema WHERE tc.constraint_type='FOREIGN KEY' "
+                "AND tc.table_schema=%s AND tc.table_name=%s",
+                (db_name, tbl),
+            )
+            for r in cur.fetchall():
+                if r[0] in col_map:
+                    col_map[r[0]]["foreign_key"] = True
+            # 普通索引 (pg_indexes)
+            cur.execute(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname=%s AND tablename=%s",
+                (db_name, tbl),
+            )
+            import re
+            for r in cur.fetchall():
+                m = re.search(r'\(([^)]+)\)', r[0] or "")
+                if m:
+                    for col in m.group(1).split(","):
+                        cn = col.strip().strip('"')
+                        if cn in col_map and not col_map[cn]["primary_key"]:
+                            col_map[cn]["index"] = True
+            # serial / identity
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=%s AND table_name=%s AND is_identity='YES'",
+                (db_name, tbl),
+            )
+            for r in cur.fetchall():
+                if r[0] in col_map:
+                    col_map[r[0]]["auto_increment"] = True
+
+        else:
+            # 其他数据库回退到 db_adapter
+            from app.core.db_adapter import list_columns as adapter_list_columns
+            cols = adapter_list_columns(ds, table)
+            for i, c in enumerate(cols):
+                columns.append({
+                    "name": c["name"],
+                    "type": c["type"],
+                    "nullable": c.get("nullable", True),
+                    "primary_key": False,
+                    "unique": False,
+                    "index": False,
+                    "auto_increment": False,
+                    "foreign_key": False,
+                    "comment": c.get("comment", ""),
+                })
+
+        conn.close()
+        if not columns:
+            raise HTTPException(status_code=404, detail=f"表 {table} 不存在或无字段")
         return {
             "datasource_id": ds.id,
             "database": ds.database_name,
@@ -108,15 +243,25 @@ def list_columns_api(
                     "name": c["name"],
                     "position": i + 1,
                     "type": c["type"],
-                    "nullable": c.get("nullable", True),
+                    "nullable": c["nullable"],
+                    "primary_key": c.get("primary_key", False),
+                    "unique": c.get("unique", False),
+                    "index": c.get("index", False),
+                    "auto_increment": c.get("auto_increment", False),
+                    "foreign_key": c.get("foreign_key", False),
                     "comment": c.get("comment", ""),
                 }
-                for i, c in enumerate(cols)
+                for i, c in enumerate(columns)
             ],
         }
     except HTTPException:
         raise
     except Exception as e:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
         raise HTTPException(status_code=502, detail=f"读取字段失败: {e}")
 
 

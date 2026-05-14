@@ -64,7 +64,6 @@
             <a-tabs v-model:active-key="detailTab" type="line" size="small">
               <a-tab-pane key="columns" title="字段定义" />
               <a-tab-pane key="preview" title="数据预览" />
-              <a-tab-pane key="quality" title="数据质量" />
             </a-tabs>
           </div>
 
@@ -85,11 +84,7 @@
                   <template #cell="{ record }">
                     <span class="col-name" :class="{ 'pk-highlight': record.primary_key }">{{ record.name }}</span>
                     <span class="field-badges">
-                      <span v-if="record.primary_key" class="mini-badge badge-pk" title="主键">P</span>
-                      <span v-if="!record.nullable" class="mini-badge badge-nn" title="非空">N</span>
-                      <span v-if="record.auto_increment" class="mini-badge badge-auto" title="自增">A</span>
-                      <span v-if="record.unique" class="mini-badge badge-uq" title="唯一">U</span>
-                      <span v-if="record.index" class="mini-badge badge-idx" title="索引">I</span>
+                      <span v-if="getBadge(record)" class="mini-badge" :class="getBadge(record).class" :title="getBadge(record).title">{{ getBadge(record).text }}</span>
                     </span>
                   </template>
                 </a-table-column>
@@ -135,11 +130,7 @@
                     <th v-for="c in preview.columns" :key="c" :class="{ 'pk-header': getColumnMeta(c)?.primary_key }">
                       <span class="col-name" :class="{ 'pk-highlight': getColumnMeta(c)?.primary_key }">{{ c }}</span>
                       <span class="field-badges preview-badges">
-                        <span v-if="getColumnMeta(c)?.primary_key" class="mini-badge badge-pk" title="主键">P</span>
-                        <span v-if="getColumnMeta(c) && !getColumnMeta(c).nullable" class="mini-badge badge-nn" title="非空">N</span>
-                        <span v-if="getColumnMeta(c)?.auto_increment" class="mini-badge badge-auto" title="自增">A</span>
-                        <span v-if="getColumnMeta(c)?.unique" class="mini-badge badge-uq" title="唯一">U</span>
-                        <span v-if="getColumnMeta(c)?.index" class="mini-badge badge-idx" title="索引">I</span>
+                        <span v-if="getBadge(getColumnMeta(c))" class="mini-badge" :class="getBadge(getColumnMeta(c)).class" :title="getBadge(getColumnMeta(c)).title">{{ getBadge(getColumnMeta(c)).text }}</span>
                       </span>
                     </th>
                   </tr>
@@ -153,112 +144,6 @@
             </div>
           </div>
 
-          <!-- 数据质量 -->
-          <div v-show="detailTab === 'quality'">
-            <div v-if="qualityLoading" class="loading-state"><a-spin /></div>
-            <div v-else-if="!quality.columns?.length" class="empty-state">暂无质量数据</div>
-            <div v-else class="quality-panel">
-              <!-- 概览卡片 -->
-              <div class="quality-overview">
-                <div class="q-card q-score">
-                  <div class="q-val">{{ qualityScore }}</div>
-                  <div class="q-label">质量总分</div>
-                  <a-progress :percent="qualityScore" :stroke-width="6" size="small" :color="scoreColor" />
-                </div>
-                <div class="q-card">
-                  <div class="q-val text-green">{{ quality.columns.filter((c: any) => c.score >= 90).length }}</div>
-                  <div class="q-label">完整字段</div>
-                </div>
-                <div class="q-card">
-                  <div class="q-val text-red">{{ quality.columns.filter((c: any) => c.score < 90).length }}</div>
-                  <div class="q-label">问题字段</div>
-                </div>
-                <div class="q-card">
-                  <div class="q-val">{{ quality.total_rows.toLocaleString() }}</div>
-                  <div class="q-label">总行数</div>
-                </div>
-              </div>
-
-              <!-- 字段质量表格 -->
-              <a-table
-                :data="quality.columns"
-                :pagination="false"
-                :bordered="false"
-                size="small"
-                stripe
-              >
-                <template #columns>
-                  <a-table-column title="字段名" :width="220">
-                    <template #cell="{ record }">
-                      <span class="col-name" :class="{ 'pk-highlight': record.primary_key }">{{ record.name }}</span>
-                      <span class="field-badges">
-                        <span v-if="record.primary_key" class="mini-badge badge-pk" title="主键">P</span>
-                        <span v-if="!record.nullable" class="mini-badge badge-nn" title="非空">N</span>
-                        <span v-if="record.auto_increment" class="mini-badge badge-auto" title="自增">A</span>
-                        <span v-if="record.unique" class="mini-badge badge-uq" title="唯一">U</span>
-                        <span v-if="record.index" class="mini-badge badge-idx" title="索引">I</span>
-                      </span>
-                    </template>
-                  </a-table-column>
-                  <a-table-column title="类型" :width="120">
-                    <template #cell="{ record }">
-                      <span class="mono">{{ record.type }}</span>
-                    </template>
-                  </a-table-column>
-                  <a-table-column title="空值率" :width="140">
-                    <template #cell="{ record }">
-                      <a-progress
-                        :percent="Math.round(record.null_rate * 100)"
-                        :stroke-width="4"
-                        size="small"
-                        :color="record.null_rate > 0.2 ? '#f53f3f' : record.null_rate > 0 ? '#ff7d00' : '#00b42a'"
-                      />
-                      <span class="rate-text">{{ (record.null_rate * 100).toFixed(1) }}%</span>
-                    </template>
-                  </a-table-column>
-                  <a-table-column title="重复率" :width="100">
-                    <template #cell="{ record }">
-                      <span :class="{ 'text-red': record.duplicate_rate > 0.1 }">{{ (record.duplicate_rate * 100).toFixed(1) }}%</span>
-                    </template>
-                  </a-table-column>
-                  <a-table-column title="统计信息" :width="200">
-                    <template #cell="{ record }">
-                      <span v-if="record.min != null" class="mini-stats">
-                        min:{{ record.min }} max:{{ record.max }}<span v-if="record.avg"> avg:{{ record.avg }}</span>
-                      </span>
-                      <span v-else class="mini-stats muted">—</span>
-                    </template>
-                  </a-table-column>
-                  <a-table-column title="评分" :width="80">
-                    <template #cell="{ record }">
-                      <span class="score-badge" :class="{ 'score-bad': record.score < 60, 'score-warn': record.score >= 60 && record.score < 90, 'score-good': record.score >= 90 }">
-                        {{ record.score }}
-                      </span>
-                    </template>
-                  </a-table-column>
-                  <a-table-column title="问题" >
-                    <template #cell="{ record }">
-                      <span v-if="!record.issues?.length" class="muted">✓ 正常</span>
-                      <span v-else class="issue-list">
-                        <a-tag v-for="(issue, i) in record.issues" :key="i" color="#f53f3f" size="small">{{ issue }}</a-tag>
-                      </span>
-                    </template>
-                  </a-table-column>
-                </template>
-              </a-table>
-
-              <!-- 异常摘要 -->
-              <div v-if="allIssues.length" class="quality-anomaly">
-                <div class="anomaly-title">⚠ 异常摘要</div>
-                <div class="anomaly-list">
-                  <div v-for="(item, i) in allIssues" :key="i" class="anomaly-item">
-                    <span class="anomaly-field">{{ item.field }}</span>
-                    <span class="anomaly-issues">{{ item.issues.join('；') }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
           </div>
         </div>
       </div>
@@ -279,7 +164,7 @@ const tablesLoading = ref(false)
 const tableFilter = ref('')
 
 const selectedTable = ref<string | null>(null)
-const detailTab = ref<'columns' | 'preview' | 'quality'>('columns')
+const detailTab = ref<'columns' | 'preview'>('columns')
 const columns = ref<any[]>([])
 const columnsLoading = ref(false)
 const preview = ref<any>({ columns: [], rows: [] })
@@ -295,6 +180,27 @@ const filteredTables = computed(() => {
 
 function getColumnMeta(colName: string) {
   return columns.value.find((c: any) => c.name === colName)
+}
+
+// 角标优先级：P > F > U > A > N > I，hover 显示所有属性
+function getBadge(record: any) {
+  if (!record) return null
+  const titles: string[] = []
+  if (record.primary_key) titles.push('主键')
+  if (record.foreign_key) titles.push('外键')
+  if (record.unique) titles.push('唯一')
+  if (record.auto_increment) titles.push('自增')
+  if (!record.nullable) titles.push('非空')
+  if (record.index) titles.push('索引')
+  const fullTitle = titles.join(' · ') || ''
+
+  if (record.primary_key) return { text: 'P', class: 'badge-pk', title: fullTitle }
+  if (record.foreign_key) return { text: 'F', class: 'badge-fk', title: fullTitle }
+  if (record.unique) return { text: 'U', class: 'badge-uq', title: fullTitle }
+  if (record.auto_increment) return { text: 'A', class: 'badge-auto', title: fullTitle }
+  if (!record.nullable) return { text: 'N', class: 'badge-nn', title: fullTitle }
+  if (record.index) return { text: 'I', class: 'badge-idx', title: fullTitle }
+  return null
 }
 
 const qualityScore = computed(() => {
@@ -396,7 +302,6 @@ async function loadPreview() {
 import { watch } from 'vue'
 watch(detailTab, (v) => {
   if (v === 'preview' && selectedTable.value && !preview.value.columns?.length) loadPreview()
-  if (v === 'quality' && selectedTable.value && !quality.value.columns?.length) loadQuality()
 })
 
 onMounted(loadDatasources)
@@ -458,6 +363,7 @@ onMounted(loadDatasources)
   cursor: default;
 }
 .badge-pk { background: #FFF3E8; color: #D46B08; }
+.badge-fk { background: #FFF0F6; color: #C41D7F; }
 .badge-nn { background: #F5F5F5; color: #8C8C8C; }
 .badge-auto { background: #E6F4FF; color: #0958D9; }
 .badge-uq { background: #E8FFEA; color: #389E0D; }
@@ -469,32 +375,5 @@ onMounted(loadDatasources)
 .preview-badges { margin-left: 2px; gap: 1px; }
 .preview-badges .mini-badge { font-size: 8px; padding: 0 2px; height: 11px; line-height: 11px; }
 
-/* 数据质量 */
-.quality-panel { padding: 0 0 16px; }
-.quality-overview { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 16px 20px; border-bottom: 1px solid #F2F3F5; }
-.q-card { background: #F7F8FA; border-radius: 8px; padding: 14px 16px; text-align: center; }
-.q-val { font-size: 22px; font-weight: 700; color: #1D2129; line-height: 1.2; }
-.q-label { font-size: 12px; color: #86909C; margin-top: 4px; }
-.text-green { color: #00B42A; }
-.text-red { color: #F53F3F; }
-
-.rate-text { font-size: 11px; color: #86909C; margin-left: 6px; }
-.mini-stats { font-size: 11px; color: #4E5969; font-family: 'JetBrains Mono', monospace; }
-.mini-stats.muted { color: #C9CDD4; }
-
-.score-badge { display: inline-block; min-width: 32px; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 700; text-align: center; }
-.score-good { background: #E8FFEA; color: #00B42A; }
-.score-warn { background: #FFF7E8; color: #FF7D00; }
-.score-bad { background: #FFECE8; color: #F53F3F; }
-
-.issue-list { display: flex; gap: 4px; flex-wrap: wrap; }
-.issue-list .arco-tag { font-size: 10px; padding: 0 4px; height: 18px; line-height: 16px; }
-
-.quality-anomaly { margin: 16px 20px 0; padding: 14px 16px; background: #FFF7E8; border-radius: 8px; border: 1px solid #FFDFA8; }
-.anomaly-title { font-size: 13px; font-weight: 600; color: #FF7D00; margin-bottom: 8px; }
-.anomaly-list { display: flex; flex-direction: column; gap: 6px; }
-.anomaly-item { display: flex; gap: 8px; font-size: 12px; }
-.anomaly-field { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: #1D2129; min-width: 120px; }
-.anomaly-issues { color: #4E5969; }
 .muted { color: #C9CDD4; font-size: 12px; }
 </style>
