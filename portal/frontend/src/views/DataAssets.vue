@@ -88,12 +88,9 @@
                         <a-popover v-if="badge" trigger="hover" :mouse-enter-delay="0" :mouse-leave-delay="0" content-class="badge-popover">
                           <template #content>
                             <div class="badge-popover-body">
-                              <div class="popover-title">字段属性</div>
-                              <div class="popover-tags">
-                                <span v-for="b in getAllBadges(record)" :key="b.text" class="popover-tag" :class="b.class">
-                                  <span class="tag-dot"></span>{{ b.label }}
-                                </span>
-                              </div>
+                              <span v-for="b in getAllBadges(record)" :key="b.text" class="popover-tag" :class="b.class">
+                                <span class="tag-dot"></span>{{ b.label }}
+                              </span>
                             </div>
                           </template>
                           <span class="mini-badge" :class="badge.class">{{ badge.text }}</span>
@@ -411,56 +408,36 @@ onMounted(loadDatasources)
 
 .muted { color: #C9CDD4; font-size: 12px; }
 
-/* badge popover 卡片样式 */
+/* badge popover 极简卡片 */
 :global(.badge-popover .arco-popover-popup-content) {
   background: #fff !important;
-  border: 1px solid #E5E6EB !important;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.1), 0 2px 6px rgba(0,0,0,0.04) !important;
-  border-radius: 8px !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
+  border-radius: 6px !important;
   padding: 0 !important;
+  border: none !important;
 }
 .badge-popover-body {
-  padding: 12px 16px;
-  min-width: 140px;
-}
-.popover-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: #86909C;
-  letter-spacing: 0.5px;
-  margin-bottom: 10px;
-}
-.popover-tags {
+  padding: 8px 12px;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
+  align-items: center;
 }
 .popover-tag {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   font-size: 12px;
-  font-weight: 500;
-  padding: 5px 10px;
-  border-radius: 4px;
-  background: #F7F8FA;
-  border-left: 3px solid;
+  color: #4E5969;
 }
 .tag-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
 }
-.popover-tag.badge-pk { color: #D46B08; border-left-color: #D46B08; }
 .popover-tag.badge-pk .tag-dot { background: #D46B08; }
-.popover-tag.badge-fk { color: #C41D7F; border-left-color: #C41D7F; }
 .popover-tag.badge-fk .tag-dot { background: #C41D7F; }
-.popover-tag.badge-uq { color: #389E0D; border-left-color: #389E0D; }
 .popover-tag.badge-uq .tag-dot { background: #389E0D; }
-.popover-tag.badge-auto { color: #0958D9; border-left-color: #0958D9; }
 .popover-tag.badge-auto .tag-dot { background: #0958D9; }
-.popover-tag.badge-nn { color: #4E5969; border-left-color: #4E5969; }
 .popover-tag.badge-nn .tag-dot { background: #4E5969; }
-.popover-tag.badge-idx { color: #86909C; border-left-color: #86909C; }
 .popover-tag.badge-idx .tag-dot { background: #86909C; }
 </style>
