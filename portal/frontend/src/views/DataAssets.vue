@@ -84,7 +84,14 @@
                   <template #cell="{ record }">
                     <span class="col-name" :class="{ 'pk-highlight': record.primary_key }">{{ record.name }}</span>
                     <span class="field-badges">
-                      <span v-if="getBadge(record)" class="mini-badge" :class="getBadge(record).class" :title="getBadge(record).title">{{ getBadge(record).text }}</span>
+                      <a-tooltip v-if="getBadge(record)" :mouse-enter-delay="0" :mouse-leave-delay="0">
+                        <template #content>
+                          <div class="badge-tooltip">
+                            <span v-for="b in getAllBadges(record)" :key="b.text" class="mini-badge" :class="b.class">{{ b.label }}</span>
+                          </div>
+                        </template>
+                        <span class="mini-badge" :class="getBadge(record).class">{{ getBadge(record).text }}</span>
+                      </a-tooltip>
                     </span>
                   </template>
                 </a-table-column>
@@ -130,7 +137,14 @@
                     <th v-for="c in preview.columns" :key="c" :class="{ 'pk-header': getColumnMeta(c)?.primary_key }">
                       <span class="col-name" :class="{ 'pk-highlight': getColumnMeta(c)?.primary_key }">{{ c }}</span>
                       <span class="field-badges preview-badges">
-                        <span v-if="getBadge(getColumnMeta(c))" class="mini-badge" :class="getBadge(getColumnMeta(c)).class" :title="getBadge(getColumnMeta(c)).title">{{ getBadge(getColumnMeta(c)).text }}</span>
+                        <a-tooltip v-if="getBadge(getColumnMeta(c))" :mouse-enter-delay="0" :mouse-leave-delay="0">
+                          <template #content>
+                            <div class="badge-tooltip">
+                              <span v-for="b in getAllBadges(getColumnMeta(c))" :key="b.text" class="mini-badge" :class="b.class">{{ b.label }}</span>
+                            </div>
+                          </template>
+                          <span class="mini-badge" :class="getBadge(getColumnMeta(c)).class">{{ getBadge(getColumnMeta(c)).text }}</span>
+                        </a-tooltip>
                       </span>
                     </th>
                   </tr>
@@ -200,6 +214,18 @@ function getBadge(record: any) {
   if (!record.nullable) return { text: 'N', class: 'badge-nn', title: fullTitle }
   if (record.index) return { text: 'I', class: 'badge-idx', title: fullTitle }
   return null
+}
+
+function getAllBadges(record: any) {
+  if (!record) return []
+  const badges = []
+  if (record.primary_key) badges.push({ text: 'P', label: '主键', class: 'badge-pk' })
+  if (record.foreign_key) badges.push({ text: 'F', label: '外键', class: 'badge-fk' })
+  if (record.unique) badges.push({ text: 'U', label: '唯一', class: 'badge-uq' })
+  if (record.auto_increment) badges.push({ text: 'A', label: '自增', class: 'badge-auto' })
+  if (!record.nullable) badges.push({ text: 'N', label: '非空', class: 'badge-nn' })
+  if (record.index) badges.push({ text: 'I', label: '索引', class: 'badge-idx' })
+  return badges
 }
 
 const qualityScore = computed(() => {
@@ -353,12 +379,12 @@ onMounted(loadDatasources)
 .field-badges { display: inline-flex; gap: 2px; margin-left: 4px; vertical-align: text-bottom; flex-wrap: nowrap; }
 .mini-badge {
   display: inline-block;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
-  padding: 0 3px;
-  height: 13px;
-  line-height: 13px;
-  border-radius: 2px;
+  padding: 2px 5px;
+  height: 16px;
+  line-height: 16px;
+  border-radius: 3px;
   cursor: default;
 }
 .badge-pk { background: #FFF3E8; color: #D46B08; }
@@ -372,7 +398,11 @@ onMounted(loadDatasources)
 
 /* 预览表格中的角标更小 */
 .preview-badges { margin-left: 2px; gap: 1px; }
-.preview-badges .mini-badge { font-size: 8px; padding: 0 2px; height: 11px; line-height: 11px; }
+.preview-badges .mini-badge { font-size: 9px; padding: 1px 4px; height: 14px; line-height: 14px; }
 
 .muted { color: #C9CDD4; font-size: 12px; }
+
+/* tooltip 内彩色标签 */
+.badge-tooltip { display: flex; gap: 6px; align-items: center; }
+.badge-tooltip .mini-badge { font-size: 11px; padding: 2px 6px; height: 18px; line-height: 18px; border-radius: 3px; }
 </style>
