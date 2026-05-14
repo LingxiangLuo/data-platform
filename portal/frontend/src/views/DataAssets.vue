@@ -85,14 +85,14 @@
                     <span class="col-name" :class="{ 'pk-highlight': record.primary_key }">{{ record.name }}</span>
                     <span class="field-badges">
                       <template v-for="badge in [getBadge(record)]" :key="badge?.text">
-                        <a-tooltip v-if="badge" :mouse-enter-delay="0" :mouse-leave-delay="0" popup-class="light-badge-tooltip">
+                        <a-popover v-if="badge" trigger="hover" :mouse-enter-delay="0" :mouse-leave-delay="0" content-class="badge-popover">
                           <template #content>
                             <div class="badge-tooltip">
                               <span v-for="b in getAllBadges(record)" :key="b.text" class="mini-badge" :class="b.class">{{ b.label }}</span>
                             </div>
                           </template>
                           <span class="mini-badge" :class="badge.class">{{ badge.text }}</span>
-                        </a-tooltip>
+                        </a-popover>
                       </template>
                     </span>
                   </template>
@@ -147,7 +147,7 @@
                               </div>
                             </template>
                             <span class="mini-badge" :class="badge.class">{{ badge.text }}</span>
-                          </a-tooltip>
+                          </a-popover>
                         </template>
                       </span>
                     </th>
@@ -415,21 +415,8 @@ onMounted(loadDatasources)
   border-radius: 10px;
 }
 
-/* 覆盖 Arco tooltip 为白色背景 — 多层穿透确保无深色残留 */
-:global(.light-badge-tooltip),
-:global(.light-badge-tooltip .arco-trigger-popup),
-:global(.light-badge-tooltip .arco-tooltip-popup) {
-  background: transparent !important;
-}
-:global(.light-badge-tooltip .arco-tooltip-content) {
-  background: #fff !important;
-  color: #1D2129 !important;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.12) !important;
-  border-radius: 6px !important;
+/* badge popover 内标签样式 */
+:global(.badge-popover .arco-popover-content) {
   padding: 6px 10px !important;
-}
-:global(.light-badge-tooltip .arco-tooltip-popup-arrow),
-:global(.light-badge-tooltip .arco-trigger-popup-arrow) {
-  background: #fff !important;
 }
 </style>
