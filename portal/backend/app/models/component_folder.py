@@ -14,6 +14,7 @@ class ComponentFolder(Base):
     type = Column(String(50), nullable=False)  # sql / python / shell / datax
     parent_id = Column(BigInteger, comment="父文件夹 id, NULL 为根")
     depth = Column(Integer, default=0, comment="层级: 0=一级, 1=二级, 2=三级")
+    sort_order = Column(Integer, default=0, nullable=False, comment="同层级排序")
     created_by = Column(BigInteger)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

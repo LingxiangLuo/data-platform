@@ -24,6 +24,7 @@ class Component(Base):
     # 发布后映射到 DS Task code (Phase 5+ 填入)
     ds_task_code = Column(BigInteger)
     folder_id = Column(BigInteger, comment="所属文件夹 id")
+    sort_order = Column(Integer, default=0, nullable=False, comment="同文件夹内排序")
     previous_status = Column(String(50), comment="暂停前的状态")
     created_by = Column(BigInteger)
     created_at = Column(DateTime, server_default=func.now())
