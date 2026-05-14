@@ -88,9 +88,7 @@
                         <a-popover v-if="badge" trigger="hover" :mouse-enter-delay="0" :mouse-leave-delay="0" content-class="badge-popover">
                           <template #content>
                             <div class="badge-popover-body">
-                              <span v-for="b in getAllBadges(record)" :key="b.text" class="popover-tag" :class="b.class">
-                                <span class="tag-dot"></span>{{ b.label }}
-                              </span>
+                              <span v-for="b in getAllBadges(record)" :key="b.text" class="popover-tag" :class="b.class">{{ b.label }}</span>
                             </div>
                           </template>
                           <span class="mini-badge" :class="badge.class">{{ badge.text }}</span>
@@ -417,27 +415,23 @@ onMounted(loadDatasources)
   border: none !important;
 }
 .badge-popover-body {
-  padding: 8px 12px;
+  padding: 6px 8px;
   display: flex;
-  gap: 10px;
+  gap: 4px;
   align-items: center;
 }
 .popover-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: #4E5969;
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 8px;
+  line-height: 1.4;
 }
-.tag-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-}
-.popover-tag.badge-pk .tag-dot { background: #D46B08; }
-.popover-tag.badge-fk .tag-dot { background: #C41D7F; }
-.popover-tag.badge-uq .tag-dot { background: #389E0D; }
-.popover-tag.badge-auto .tag-dot { background: #0958D9; }
-.popover-tag.badge-nn .tag-dot { background: #4E5969; }
-.popover-tag.badge-idx .tag-dot { background: #86909C; }
+.popover-tag.badge-pk { background: #FFF3E8; color: #D46B08; }
+.popover-tag.badge-fk { background: #FFF0F6; color: #C41D7F; }
+.popover-tag.badge-uq { background: #E8FFEA; color: #389E0D; }
+.popover-tag.badge-auto { background: #E6F4FF; color: #0958D9; }
+.popover-tag.badge-nn { background: #F5F5F5; color: #4E5969; }
+.popover-tag.badge-idx { background: #F5F5F5; color: #86909C; }
 </style>
