@@ -84,11 +84,7 @@
                   <template #cell="{ record }">
                     <span class="col-name" :class="{ 'pk-highlight': record.primary_key }">{{ record.name }}</span>
                     <span class="field-badges">
-                      <span v-if="record.primary_key" class="mini-badge badge-pk" title="主键">P</span>
-                      <span v-if="!record.nullable" class="mini-badge badge-nn" title="非空">N</span>
-                      <span v-if="record.auto_increment" class="mini-badge badge-auto" title="自增">A</span>
-                      <span v-if="record.unique" class="mini-badge badge-uq" title="唯一">U</span>
-                      <span v-if="record.index" class="mini-badge badge-idx" title="索引">I</span>
+                      <span v-if="getBadge(record)" class="mini-badge" :class="getBadge(record).class" :title="getBadge(record).title">{{ getBadge(record).text }}</span>
                     </span>
                   </template>
                 </a-table-column>
@@ -134,11 +130,7 @@
                     <th v-for="c in preview.columns" :key="c" :class="{ 'pk-header': getColumnMeta(c)?.primary_key }">
                       <span class="col-name" :class="{ 'pk-highlight': getColumnMeta(c)?.primary_key }">{{ c }}</span>
                       <span class="field-badges preview-badges">
-                        <span v-if="getColumnMeta(c)?.primary_key" class="mini-badge badge-pk" title="主键">P</span>
-                        <span v-if="getColumnMeta(c) && !getColumnMeta(c).nullable" class="mini-badge badge-nn" title="非空">N</span>
-                        <span v-if="getColumnMeta(c)?.auto_increment" class="mini-badge badge-auto" title="自增">A</span>
-                        <span v-if="getColumnMeta(c)?.unique" class="mini-badge badge-uq" title="唯一">U</span>
-                        <span v-if="getColumnMeta(c)?.index" class="mini-badge badge-idx" title="索引">I</span>
+                        <span v-if="getBadge(getColumnMeta(c))" class="mini-badge" :class="getBadge(getColumnMeta(c)).class" :title="getBadge(getColumnMeta(c)).title">{{ getBadge(getColumnMeta(c)).text }}</span>
                       </span>
                     </th>
                   </tr>
@@ -188,6 +180,26 @@ const filteredTables = computed(() => {
 
 function getColumnMeta(colName: string) {
   return columns.value.find((c: any) => c.name === colName)
+}
+
+// 角标优先级：P > F > U > A > N > I，hover 显示所有属性
+function getBadge(record: any) {
+  const titles: string[] = []
+  if (record.primary_key) titles.push('主键')
+  if (record.foreign_key) titles.push('外键')
+  if (record.unique) titles.push('唯一')
+  if (record.auto_increment) titles.push('自增')
+  if (!record.nullable) titles.push('非空')
+  if (record.index) titles.push('索引')
+  const fullTitle = titles.join(' · ') || ''
+
+  if (record.primary_key) return { text: 'P', class: 'badge-pk', title: fullTitle }
+  if (record.foreign_key) return { text: 'F', class: 'badge-fk', title: fullTitle }
+  if (record.unique) return { text: 'U', class: 'badge-uq', title: fullTitle }
+  if (record.auto_increment) return { text: 'A', class: 'badge-auto', title: fullTitle }
+  if (!record.nullable) return { text: 'N', class: 'badge-nn', title: fullTitle }
+  if (record.index) return { text: 'I', class: 'badge-idx', title: fullTitle }
+  return null
 }
 
 const qualityScore = computed(() => {
@@ -350,6 +362,7 @@ onMounted(loadDatasources)
   cursor: default;
 }
 .badge-pk { background: #FFF3E8; color: #D46B08; }
+.badge-fk { background: #FFF0F6; color: #C41D7F; }
 .badge-nn { background: #F5F5F5; color: #8C8C8C; }
 .badge-auto { background: #E6F4FF; color: #0958D9; }
 .badge-uq { background: #E8FFEA; color: #389E0D; }
