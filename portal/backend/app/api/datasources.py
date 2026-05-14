@@ -14,7 +14,7 @@ router = APIRouter(prefix="/datasources", tags=["数据源"])
 
 class DataSourceCreate(BaseModel):
     name: str
-    type: str  # mysql / sqlserver / postgresql
+    type: str  # mysql / postgresql / sqlserver / oracle / clickhouse / mongodb / redis / hive
     host: str
     port: int
     database_name: str
@@ -131,18 +131,59 @@ def test_connection(
     if not ds:
         raise HTTPException(status_code=404, detail="数据源不存在")
 
-    import pymysql
     try:
-        if ds.type == "mysql":
+        t = (ds.type or "").lower()
+        if t == "mysql":
+            import pymysql
             conn = pymysql.connect(
                 host=ds.host, port=ds.port, user=ds.username,
                 password=ds.password, database=ds.database_name, connect_timeout=5,
             )
             conn.close()
-            ds.status = 1
+        elif t == "postgresql":
+            import psycopg2
+            conn = psycopg2.connect(
+                host=ds.host, port=ds.port, user=ds.username,
+                password=ds.password, dbname=ds.database_name, connect_timeout=5,
+            )
+            conn.close()
+        elif t == "sqlserver":
+            import pymssql
+            conn = pymssql.connect(
+                server=ds.host, port=str(ds.port), user=ds.username,
+                password=ds.password, database=ds.database_name, login_timeout=5,
+            )
+            conn.close()
+        elif t == "oracle":
+            import cx_Oracle
+            dsn = cx_Oracle.makedsn(ds.host, ds.port, service_name=ds.database_name)
+            conn = cx_Oracle.connect(user=ds.username, password=ds.password or "", dsn=dsn)
+            conn.close()
+        elif t == "clickhouse":
+            from clickhouse_driver import Client
+            client = Client(host=ds.host, port=ds.port, user=ds.username, password=ds.password or "", database=ds.database_name)
+            client.execute("SELECT 1")
+        elif t == "mongodb":
+            from pymongo import MongoClient
+            uri = f"mongodb://{ds.username}:{ds.password}@{ds.host}:{ds.port}/{ds.database_name}"
+            client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+            client.admin.command("ping")
+            client.close()
+        elif t == "redis":
+            import redis
+            r = redis.Redis(host=ds.host, port=ds.port, password=ds.password or None, decode_responses=True, socket_connect_timeout=5)
+            r.ping()
+        elif t == "hive":
+            # Hive 通过 pyhive 或标记为可用，暂用 impyla
+            from impala.dbapi import connect
+            conn = connect(host=ds.host, port=ds.port, user=ds.username, password=ds.password or "", database=ds.database_name, auth_mechanism="PLAIN", timeout=5)
+            conn.close()
         else:
-            # SQLServer 等其他类型暂标记为可用
             ds.status = 1
+            db.commit()
+            return {"message": f"{ds.type} 暂不支持自动连接测试，已标记为可用", "status": 1}
+
+        ds.status = 1
         db.commit()
         return {"message": "连接测试成功", "status": 1}
     except Exception as e:
