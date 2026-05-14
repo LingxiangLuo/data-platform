@@ -183,12 +183,13 @@ function handleDelete(r: any) {
   })
 }
 
-async function handleImport(option: any) {
-  try {
-    const res: any = await importWordRoots(option.fileItem.file)
-    Message.success(`导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条`)
-    loadData()
-  } catch (e: any) { Message.error(e?.response?.data?.detail || '导入失败') }
+function handleImport(option: any) {
+  importWordRoots(option.fileItem.file)
+    .then((res: any) => {
+      Message.success(`导入完成：新增 ${res.created} 条，跳过 ${res.skipped} 条`)
+      loadData()
+    })
+    .catch((e: any) => { Message.error(e?.response?.data?.detail || '导入失败') })
   return { abort: () => {} }
 }
 
