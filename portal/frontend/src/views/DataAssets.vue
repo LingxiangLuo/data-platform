@@ -84,7 +84,16 @@
                   <template #cell="{ record }">
                     <span class="col-name" :class="{ 'pk-highlight': record.primary_key }">{{ record.name }}</span>
                     <span class="field-badges">
-                      <span v-if="getBadge(record)" class="mini-badge" :class="getBadge(record).class" :title="getBadge(record).title">{{ getBadge(record).text }}</span>
+                      <template v-for="badge in [getBadge(record)]" :key="badge?.text">
+                        <a-popover v-if="badge" trigger="hover" :mouse-enter-delay="0" :mouse-leave-delay="0" content-class="badge-popover">
+                          <template #content>
+                            <div class="badge-popover-body">
+                              <span v-for="b in getAllBadges(record)" :key="b.text" class="popover-tag" :class="b.class">{{ b.label }}</span>
+                            </div>
+                          </template>
+                          <span class="mini-badge" :class="badge.class">{{ badge.text }}</span>
+                        </a-popover>
+                      </template>
                     </span>
                   </template>
                 </a-table-column>
@@ -130,7 +139,16 @@
                     <th v-for="c in preview.columns" :key="c" :class="{ 'pk-header': getColumnMeta(c)?.primary_key }">
                       <span class="col-name" :class="{ 'pk-highlight': getColumnMeta(c)?.primary_key }">{{ c }}</span>
                       <span class="field-badges preview-badges">
-                        <span v-if="getBadge(getColumnMeta(c))" class="mini-badge" :class="getBadge(getColumnMeta(c)).class" :title="getBadge(getColumnMeta(c)).title">{{ getBadge(getColumnMeta(c)).text }}</span>
+                        <template v-for="badge in [getBadge(getColumnMeta(c))]" :key="badge?.text">
+                          <a-popover v-if="badge" trigger="hover" :mouse-enter-delay="0" :mouse-leave-delay="0" content-class="badge-popover">
+                            <template #content>
+                              <div class="badge-popover-body">
+                                <span v-for="b in getAllBadges(getColumnMeta(c))" :key="b.text" class="popover-tag" :class="b.class">{{ b.label }}</span>
+                              </div>
+                            </template>
+                            <span class="mini-badge" :class="badge.class">{{ badge.text }}</span>
+                          </a-popover>
+                        </template>
                       </span>
                     </th>
                   </tr>
@@ -155,7 +173,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { IconRefresh, IconSearch, IconStorage } from '@arco-design/web-vue/es/icon'
-import { getDatasources, getMetadataTables, getMetadataColumns, getMetadataPreview, getMetadataQuality } from '../api'
+import { getDatasources, getMetadataTables, getMetadataColumns, getMetadataPreview } from '../api'
 
 const dsOptions = ref<{ label: string; value: number }[]>([])
 const dsId = ref<number | undefined>(undefined)
@@ -169,8 +187,6 @@ const columns = ref<any[]>([])
 const columnsLoading = ref(false)
 const preview = ref<any>({ columns: [], rows: [] })
 const previewLoading = ref(false)
-const quality = ref<any>({ total_rows: 0, columns: [] })
-const qualityLoading = ref(false)
 
 const filteredTables = computed(() => {
   if (!tableFilter.value) return tables.value
@@ -184,7 +200,6 @@ function getColumnMeta(colName: string) {
 
 // 角标优先级：P > F > U > A > N > I，hover 显示所有属性
 function getBadge(record: any) {
-  if (!record) return null
   const titles: string[] = []
   if (record.primary_key) titles.push('主键')
   if (record.foreign_key) titles.push('外键')
@@ -203,24 +218,17 @@ function getBadge(record: any) {
   return null
 }
 
-const qualityScore = computed(() => {
-  if (!quality.value.columns?.length) return 0
-  const total = quality.value.columns.reduce((s: number, c: any) => s + c.score, 0)
-  return Math.round(total / quality.value.columns.length)
-})
-
-const scoreColor = computed(() => {
-  const s = qualityScore.value
-  if (s >= 90) return '#00b42a'
-  if (s >= 60) return '#ff7d00'
-  return '#f53f3f'
-})
-
-const allIssues = computed(() => {
-  return quality.value.columns
-    ?.filter((c: any) => c.issues?.length)
-    ?.map((c: any) => ({ field: c.name, issues: c.issues })) || []
-})
+function getAllBadges(record: any) {
+  if (!record) return []
+  const badges = []
+  if (record.primary_key) badges.push({ text: 'P', label: '主键', class: 'badge-pk' })
+  if (record.foreign_key) badges.push({ text: 'F', label: '外键', class: 'badge-fk' })
+  if (record.unique) badges.push({ text: 'U', label: '唯一', class: 'badge-uq' })
+  if (record.auto_increment) badges.push({ text: 'A', label: '自增', class: 'badge-auto' })
+  if (!record.nullable) badges.push({ text: 'N', label: '非空', class: 'badge-nn' })
+  if (record.index) badges.push({ text: 'I', label: '索引', class: 'badge-idx' })
+  return badges
+}
 
 async function loadDatasources() {
   const res: any = await getDatasources({ page: 1, page_size: 100 })
@@ -257,7 +265,6 @@ async function selectTable(name: string) {
   selectedTable.value = name
   detailTab.value = 'columns'
   preview.value = { columns: [], rows: [] }
-  quality.value = { total_rows: 0, columns: [] }
   columnsLoading.value = true
   try {
     const res: any = await getMetadataColumns(dsId.value!, name)
@@ -267,22 +274,6 @@ async function selectTable(name: string) {
     columns.value = []
   }
   columnsLoading.value = false
-}
-
-async function loadQuality() {
-  if (!dsId.value || !selectedTable.value) return
-  qualityLoading.value = true
-  try {
-    const res: any = await getMetadataQuality(dsId.value, selectedTable.value)
-    quality.value = {
-      total_rows: res.total_rows || 0,
-      columns: res.columns || [],
-    }
-  } catch (e: any) {
-    Message.error(e?.response?.data?.detail || '数据质量分析失败')
-    quality.value = { total_rows: 0, columns: [] }
-  }
-  qualityLoading.value = false
 }
 
 async function loadPreview() {
@@ -354,12 +345,12 @@ onMounted(loadDatasources)
 .field-badges { display: inline-flex; gap: 2px; margin-left: 4px; vertical-align: text-bottom; flex-wrap: nowrap; }
 .mini-badge {
   display: inline-block;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
-  padding: 0 3px;
-  height: 13px;
-  line-height: 13px;
-  border-radius: 2px;
+  padding: 2px 5px;
+  height: 16px;
+  line-height: 16px;
+  border-radius: 3px;
   cursor: default;
 }
 .badge-pk { background: #FFF3E8; color: #D46B08; }
@@ -373,7 +364,36 @@ onMounted(loadDatasources)
 
 /* 预览表格中的角标更小 */
 .preview-badges { margin-left: 2px; gap: 1px; }
-.preview-badges .mini-badge { font-size: 8px; padding: 0 2px; height: 11px; line-height: 11px; }
+.preview-badges .mini-badge { font-size: 9px; padding: 1px 4px; height: 14px; line-height: 14px; }
 
 .muted { color: #C9CDD4; font-size: 12px; }
+
+/* badge popover 极简卡片 */
+:global(.badge-popover .arco-popover-popup-content) {
+  background: #fff !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
+  border-radius: 6px !important;
+  padding: 0 !important;
+  border: none !important;
+}
+.badge-popover-body {
+  padding: 4px 6px;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.popover-tag {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 8px;
+  line-height: 1.3;
+}
+.popover-tag.badge-pk { background: #FFF3E8; color: #D46B08; }
+.popover-tag.badge-fk { background: #FFF0F6; color: #C41D7F; }
+.popover-tag.badge-uq { background: #E8FFEA; color: #389E0D; }
+.popover-tag.badge-auto { background: #E6F4FF; color: #0958D9; }
+.popover-tag.badge-nn { background: #F5F5F5; color: #4E5969; }
+.popover-tag.badge-idx { background: #F5F5F5; color: #86909C; }
 </style>
