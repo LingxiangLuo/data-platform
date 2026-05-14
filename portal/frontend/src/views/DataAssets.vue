@@ -142,8 +142,8 @@
                         <template v-for="badge in [getBadge(getColumnMeta(c))]" :key="badge?.text">
                           <a-popover v-if="badge" trigger="hover" :mouse-enter-delay="0" :mouse-leave-delay="0" content-class="badge-popover">
                             <template #content>
-                              <div class="badge-tooltip">
-                                <span v-for="b in getAllBadges(getColumnMeta(c))" :key="b.text" class="mini-badge" :class="b.class">{{ b.label }}</span>
+                              <div class="badge-popover-body">
+                                <span v-for="b in getAllBadges(getColumnMeta(c))" :key="b.text" class="popover-tag" :class="b.class">{{ b.label }}</span>
                               </div>
                             </template>
                             <span class="mini-badge" :class="badge.class">{{ badge.text }}</span>
