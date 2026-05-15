@@ -174,14 +174,14 @@ const MenuList: any = defineComponent({
   background: #F5F5F7;
   backdrop-filter: blur(24px) saturate(1.6);
   -webkit-backdrop-filter: blur(24px) saturate(1.6);
-  border-radius: 12px;
+  border-radius: 14px;
   border: 1px solid rgba(0, 0, 0, 0.04);
   box-shadow:
     0 0 0 0.5px rgba(0, 0, 0, 0.04),
     0 8px 24px rgba(0, 0, 0, 0.08),
     0 2px 6px rgba(0, 0, 0, 0.04);
-  padding: 8px 0;
-  min-width: 200px;
+  padding: 10px 0;
+  min-width: 220px;
   font-size: 13px;
   line-height: 1;
   user-select: none;
@@ -198,15 +198,14 @@ const MenuList: any = defineComponent({
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   padding: 0 16px;
-  height: 34px;
+  height: 36px;
   cursor: pointer;
   color: #1D2129;
   transition: background 0.15s ease, color 0.15s ease;
   white-space: nowrap;
-  margin: 0 8px;
+  margin: 0 10px;
   border-radius: 8px;
 }
 
@@ -256,6 +255,8 @@ const MenuList: any = defineComponent({
   font-size: 8px;
   color: #86909C;
   flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 8px;
   transform: scale(0.75);
   opacity: 0.6;
   transition: opacity 0.12s;
@@ -269,8 +270,8 @@ const MenuList: any = defineComponent({
 
 .menu-divider {
   height: 1px;
-  background: rgba(0, 0, 0, 0.06);
-  margin: 6px 0;
+  background: rgba(0, 0, 0, 0.08);
+  margin: 6px 16px;
   list-style: none;
 }
 
@@ -295,10 +296,10 @@ const MenuList: any = defineComponent({
 }
 
 .menu-nested .menu-item {
-  height: 32px;
+  height: 34px;
   font-size: 12px;
   padding: 0 14px;
-  margin: 0 8px;
+  margin: 0 10px;
 }
 
 /* 动画 */
