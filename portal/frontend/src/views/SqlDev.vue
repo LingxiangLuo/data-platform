@@ -690,20 +690,21 @@ async function loadDatasources() {
 }
 
 // ---- 右键菜单 ----
-function typeLabel(type: string): string {
-  const map: Record<string, string> = { sql: 'SQL 查询', python: 'Python 脚本', shell: 'Shell 脚本' }
-  return map[type] || type
-}
-
 function buildCompMenuItems(node: TreeNode): MenuItem[] {
   const c = node.data
-  const t = c.type as string
   const items: MenuItem[] = []
   items.push({ key: 'open', label: '打开' })
   items.push({ key: 'run', label: '运行' })
   items.push({ divider: true })
-  // 同类型新建
-  items.push({ key: `new-${t}`, label: `新建${typeLabel(t)}` })
+  items.push({
+    key: 'new',
+    label: '新建',
+    children: [
+      { key: 'new-sql', label: 'SQL 查询' },
+      { key: 'new-python', label: 'Python 脚本' },
+      { key: 'new-shell', label: 'Shell 脚本' },
+    ],
+  })
   items.push({ key: 'copy', label: '复制' })
   items.push({ key: 'cut', label: '剪切' })
   if (clipboard.value && clipboard.value.kind === 'component') {
@@ -714,7 +715,7 @@ function buildCompMenuItems(node: TreeNode): MenuItem[] {
   items.push({
     key: 'move',
     label: '移动到其他文件夹',
-    children: buildMoveToFolderMenu(t, 'move-to'),
+    children: buildMoveToFolderMenu(c.type, 'move-to'),
   })
   items.push({ divider: true })
   if (c.status === 'paused') {
@@ -734,14 +735,20 @@ function buildCompMenuItems(node: TreeNode): MenuItem[] {
 function buildFolderMenuItems(node: TreeNode): MenuItem[] {
   const items: MenuItem[] = []
   const collapsed = folderCollapsed[node.id]
-  const t = node.folderType
   items.push({ key: collapsed ? 'expand' : 'collapse', label: collapsed ? '展开' : '折叠' })
   items.push({ divider: true })
   if (node.depth < 2) {
     items.push({ key: 'new-subfolder', label: '新建子文件夹' })
   }
-  // 同类型新建组件
-  items.push({ key: `new-${t}`, label: `新建${typeLabel(t)}` })
+  items.push({
+    key: 'new',
+    label: '新建组件',
+    children: [
+      { key: 'new-sql', label: 'SQL 查询' },
+      { key: 'new-python', label: 'Python 脚本' },
+      { key: 'new-shell', label: 'Shell 脚本' },
+    ],
+  })
   items.push({ divider: true })
   items.push({ key: 'rename', label: '重命名' })
   items.push({ key: 'cut', label: '剪切' })
