@@ -357,6 +357,8 @@ const clipboard = ref<{ kind: 'component' | 'folder'; action: 'copy' | 'cut'; id
 const dragState = reactive({
   draggingId: null as number | null,
   dragKind: null as 'component' | 'folder' | null,
+  dragFolderType: null as string | null,
+  dragFolderId: null as number | null,
   dropTargetId: null as number | string | null,
   dropKind: null as 'component' | 'folder' | 'group' | null,
 })
@@ -919,6 +921,8 @@ async function submitRenameComp(id: number) {
 function onDragStart(e: DragEvent, node: TreeNode) {
   dragState.draggingId = node.id
   dragState.dragKind = node.kind
+  dragState.dragFolderType = node.folderType
+  dragState.dragFolderId = node.data?.folder_id ?? null
   e.dataTransfer!.effectAllowed = 'move'
   e.dataTransfer!.setData('application/json', JSON.stringify({
     id: node.id,
@@ -941,10 +945,6 @@ function folderContains(parentId: number, childId: number): boolean {
 
 function onDragOver(e: DragEvent, targetNode: TreeNode) {
   e.preventDefault()
-  const dataStr = e.dataTransfer!.getData('application/json')
-  if (!dataStr) return
-  const data = JSON.parse(dataStr)
-
   // 同节点不处理
   if (dragState.draggingId === targetNode.id) {
     dragState.dropTargetId = null
@@ -954,7 +954,7 @@ function onDragOver(e: DragEvent, targetNode: TreeNode) {
   }
 
   // 跨类型阻止
-  if (data.folderType !== targetNode.folderType) {
+  if (dragState.dragFolderType !== targetNode.folderType) {
     dragState.dropTargetId = null
     dragState.dropKind = null
     e.dataTransfer!.dropEffect = 'none'
@@ -962,7 +962,7 @@ function onDragOver(e: DragEvent, targetNode: TreeNode) {
   }
 
   // 文件夹不能拖到组件上
-  if (data.kind === 'folder' && targetNode.kind === 'component') {
+  if (dragState.dragKind === 'folder' && targetNode.kind === 'component') {
     dragState.dropTargetId = null
     dragState.dropKind = null
     e.dataTransfer!.dropEffect = 'none'
@@ -970,8 +970,8 @@ function onDragOver(e: DragEvent, targetNode: TreeNode) {
   }
 
   // 文件夹拖到文件夹：阻止循环引用（不能拖到自身或其子文件夹）
-  if (data.kind === 'folder' && targetNode.kind === 'folder') {
-    if (data.id === targetNode.id || folderContains(data.id, targetNode.id)) {
+  if (dragState.dragKind === 'folder' && targetNode.kind === 'folder') {
+    if (dragState.draggingId! === targetNode.id || folderContains(dragState.draggingId!, targetNode.id)) {
       dragState.dropTargetId = null
       dragState.dropKind = null
       e.dataTransfer!.dropEffect = 'none'
@@ -991,7 +991,7 @@ async function onDrop(e: DragEvent, targetNode: TreeNode) {
   const data = JSON.parse(dataStr)
 
   // 跨类型忽略
-  if (data.folderType !== targetNode.folderType) return
+  if (dragState.dragFolderType !== targetNode.folderType) return
 
   if (data.kind === 'component' && targetNode.kind === 'folder') {
     // 组件拖到文件夹 = 移动
@@ -1008,14 +1008,16 @@ async function onDrop(e: DragEvent, targetNode: TreeNode) {
       await loadComponents()
       await doReorderBetween(data.id, targetNode.id)
     }
-  } else if (data.kind === 'folder' && targetNode.kind === 'folder') {
+  } else if (dragState.dragKind === 'folder' && targetNode.kind === 'folder') {
     // 文件夹拖到文件夹 = 嵌套移动
-    if (data.id === targetNode.id || folderContains(data.id, targetNode.id)) return
+    if (dragState.draggingId! === targetNode.id || folderContains(dragState.draggingId!, targetNode.id)) return
     await doMoveFolder(data.id, targetNode.id)
   }
 
   dragState.draggingId = null
   dragState.dragKind = null
+  dragState.dragFolderType = null
+  dragState.dragFolderId = null
   dragState.dropTargetId = null
   dragState.dropKind = null
 }
@@ -1023,16 +1025,12 @@ async function onDrop(e: DragEvent, targetNode: TreeNode) {
 /** 拖拽经过类型组标题：只允许同类型组件移回根目录 */
 function onDragOverGroup(e: DragEvent, groupType: string) {
   e.preventDefault()
-  const dataStr = e.dataTransfer!.getData('application/json')
-  if (!dataStr) return
-  const data = JSON.parse(dataStr)
-  if (data.folderType !== groupType) {
     e.dataTransfer!.dropEffect = 'none'
     dragState.dropTargetId = null
     dragState.dropKind = null
     return
   }
-  if (data.kind === 'folder') {
+  if (dragState.dragKind === 'folder') {
     e.dataTransfer!.dropEffect = 'none'
     dragState.dropTargetId = null
     dragState.dropKind = null
@@ -1049,12 +1047,14 @@ async function onDropGroup(e: DragEvent, groupType: string) {
   const dataStr = e.dataTransfer!.getData('application/json')
   if (!dataStr) return
   const data = JSON.parse(dataStr)
-  if (data.folderType !== groupType) return
+  if (dragState.dragFolderType !== groupType) return
   if (data.kind === 'component') {
     await doMoveComponent(data.id, 0)
   }
   dragState.draggingId = null
   dragState.dragKind = null
+  dragState.dragFolderType = null
+  dragState.dragFolderId = null
   dragState.dropTargetId = null
   dragState.dropKind = null
 }
@@ -1062,6 +1062,8 @@ async function onDropGroup(e: DragEvent, groupType: string) {
 function onDragEnd() {
   dragState.draggingId = null
   dragState.dragKind = null
+  dragState.dragFolderType = null
+  dragState.dragFolderId = null
   dragState.dropTargetId = null
   dragState.dropKind = null
 }
