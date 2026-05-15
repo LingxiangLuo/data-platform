@@ -45,7 +45,6 @@ const menuRef = ref<HTMLElement>()
 const menuStyle = computed(() => {
   let left = props.x
   let top = props.y
-  // 简单边界处理：后续通过 nextTick 调整
   return {
     left: `${left}px`,
     top: `${top}px`,
@@ -65,7 +64,6 @@ function onSelect(key: string) {
   close()
 }
 
-// 点击外部关闭
 watch(() => props.visible, (v) => {
   if (v) {
     nextTick(() => {
@@ -82,7 +80,6 @@ watch(() => props.visible, (v) => {
 </script>
 
 <script lang="ts">
-// 子菜单列表（递归组件）
 import { h, defineComponent } from 'vue'
 
 const MenuList: any = defineComponent({
@@ -173,14 +170,22 @@ const MenuList: any = defineComponent({
 .context-menu {
   position: fixed;
   z-index: 9999;
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 0 1px rgba(0, 0, 0, 0.08);
-  padding: 4px 0;
-  min-width: 140px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px) saturate(1.8);
+  -webkit-backdrop-filter: blur(20px) saturate(1.8);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.04),
+    0 4px 8px rgba(0, 0, 0, 0.04),
+    0 12px 24px rgba(0, 0, 0, 0.08),
+    0 24px 48px rgba(0, 0, 0, 0.06);
+  padding: 6px 0;
+  min-width: 180px;
   font-size: 13px;
   line-height: 1;
   user-select: none;
+  overflow: hidden;
 }
 
 .menu-list {
@@ -195,17 +200,20 @@ const MenuList: any = defineComponent({
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 0 12px;
-  height: 28px;
+  padding: 0 14px;
+  height: 32px;
   cursor: pointer;
   color: #1D2129;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.12s ease, color 0.12s ease;
   white-space: nowrap;
+  margin: 0 6px;
+  border-radius: 6px;
 }
 
 .menu-item:hover,
 .menu-item.menu-active {
-  background: #F2F3F5;
+  background: rgba(43, 90, 237, 0.08);
+  color: #2B5AED;
 }
 
 .menu-item.menu-danger {
@@ -213,7 +221,8 @@ const MenuList: any = defineComponent({
 }
 
 .menu-item.menu-danger:hover {
-  background: #FFECE8;
+  background: rgba(245, 63, 63, 0.08);
+  color: #F53F3F;
 }
 
 .menu-item.menu-disabled {
@@ -221,53 +230,83 @@ const MenuList: any = defineComponent({
   cursor: not-allowed;
 }
 
+.menu-item.menu-disabled:hover {
+  background: transparent;
+  color: #C9CDD4;
+}
+
 .menu-label {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 400;
 }
 
 .menu-arrow {
-  font-size: 9px;
+  font-size: 8px;
   color: #86909C;
   flex-shrink: 0;
-  transform: scale(0.8);
+  transform: scale(0.75);
+  opacity: 0.7;
+  transition: opacity 0.12s;
+}
+
+.menu-item:hover .menu-arrow,
+.menu-item.menu-active .menu-arrow {
+  opacity: 1;
+  color: #2B5AED;
 }
 
 .menu-divider {
   height: 1px;
-  background: #F2F3F5;
-  margin: 4px 8px;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.06) 10%, rgba(0,0,0,0.06) 90%, transparent 100%);
+  margin: 5px 12px;
   list-style: none;
 }
 
 /* 子菜单 */
 .menu-submenu {
   position: absolute;
-  left: calc(100% - 4px);
-  top: -4px;
-  background: #fff;
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 0 1px rgba(0, 0, 0, 0.08);
-  padding: 4px 0;
-  min-width: 140px;
+  left: calc(100% - 6px);
+  top: -6px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px) saturate(1.8);
+  -webkit-backdrop-filter: blur(20px) saturate(1.8);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.04),
+    0 4px 8px rgba(0, 0, 0, 0.04),
+    0 12px 24px rgba(0, 0, 0, 0.08),
+    0 24px 48px rgba(0, 0, 0, 0.06);
+  padding: 6px 0;
+  min-width: 160px;
   z-index: 10000;
+  overflow: hidden;
 }
 
 .menu-nested .menu-item {
-  height: 26px;
+  height: 30px;
   font-size: 12px;
-  padding: 0 10px;
+  padding: 0 12px;
+  margin: 0 6px;
 }
 
 /* 动画 */
 .menu-fade-enter-active,
 .menu-fade-leave-active {
-  transition: opacity 0.15s ease;
+  transition: opacity 0.12s ease, transform 0.12s ease;
 }
 
 .menu-fade-enter-from,
 .menu-fade-leave-to {
   opacity: 0;
+  transform: scale(0.97);
+}
+
+.menu-fade-enter-to,
+.menu-fade-leave-from {
+  opacity: 1;
+  transform: scale(1);
 }
 </style>
