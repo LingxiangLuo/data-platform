@@ -172,12 +172,12 @@ const MenuList: any = defineComponent({
   position: fixed;
   z-index: 9999;
   background: #fff;
-  border-radius: 6px;
-  border: 1px solid #e5e5e5;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12), 0 0 1px rgba(0, 0, 0, 0.08);
-  padding: 4px 0;
-  min-width: 180px;
-  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.08);
+  padding: 6px 0;
+  min-width: 200px;
+  font-size: 13px;
   line-height: 1;
   user-select: none;
   overflow: hidden;
@@ -193,23 +193,23 @@ const MenuList: any = defineComponent({
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 24px 0 12px;
-  height: 26px;
+  gap: 10px;
+  padding: 0 28px 0 14px;
+  height: 30px;
   cursor: pointer;
   color: #1d1d1d;
-  transition: background 0.08s;
+  transition: background 0.1s;
   white-space: nowrap;
-  margin: 1px 4px;
-  border-radius: 4px;
+  margin: 2px 6px;
+  border-radius: 5px;
 }
 
 .menu-item:hover {
-  background: #f0f0f0;
+  background: #e8e8e8;
 }
 
 .menu-item.menu-active {
-  background: #e8e8e8;
+  background: #d8d8d8;
   color: #1d1d1d;
 }
 
@@ -260,8 +260,8 @@ const MenuList: any = defineComponent({
 
 .menu-divider {
   height: 1px;
-  background: #e8e8e8;
-  margin: 4px 0;
+  background: #e0e0e0;
+  margin: 6px 0;
   list-style: none;
 }
 
@@ -269,23 +269,23 @@ const MenuList: any = defineComponent({
 .menu-submenu {
   position: absolute;
   left: 100%;
-  top: -4px;
+  top: -6px;
   background: #fff;
-  border-radius: 6px;
-  border: 1px solid #e5e5e5;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12), 0 0 1px rgba(0, 0, 0, 0.08);
-  padding: 4px 0;
-  min-width: 160px;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.08);
+  padding: 6px 0;
+  min-width: 180px;
   z-index: 10000;
   overflow: hidden;
 }
 
 .menu-nested .menu-item {
-  height: 24px;
-  font-size: 12px;
-  padding: 0 20px 0 12px;
-  margin: 1px 4px;
-  border-radius: 4px;
+  height: 28px;
+  font-size: 13px;
+  padding: 0 24px 0 14px;
+  margin: 2px 6px;
+  border-radius: 5px;
 }
 
 /* 动画 */

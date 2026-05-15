@@ -1466,7 +1466,5 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 .comp-node.drop-before {
   box-shadow: inset 0 2px 0 0 #2B5AED;
 }
-.comp-node.drop-after {
-  box-shadow: inset 0 -2px 0 0 #2B5AED;
-}
+/* drop-after 不显示线，因为等价于下一个节点的 drop-before */
 </style>
