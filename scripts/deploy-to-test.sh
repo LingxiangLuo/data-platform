@@ -64,8 +64,11 @@ echo "[4/5] 构建并启动服务..."
 ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$TEST_USER@$TEST_HOST" "
     cd $TEST_DIR
 
-    # 启动所有服务（使用已有镜像或重新构建）
-    docker compose up -d --build
+    # 强制重新构建前端和后端（避免 Docker 缓存导致代码未更新）
+    docker compose build --no-cache portal-frontend portal-backend
+
+    # 启动所有服务
+    docker compose up -d
 
     echo '等待服务启动...'
     sleep 20
