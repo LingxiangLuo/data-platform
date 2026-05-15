@@ -171,17 +171,17 @@ const MenuList: any = defineComponent({
 .context-menu {
   position: fixed;
   z-index: 9999;
-  background: #F5F5F7;
+  background: #FFFFFF;
   backdrop-filter: blur(24px) saturate(1.6);
   -webkit-backdrop-filter: blur(24px) saturate(1.6);
-  border-radius: 14px;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
   box-shadow:
     0 0 0 0.5px rgba(0, 0, 0, 0.04),
-    0 8px 24px rgba(0, 0, 0, 0.08),
-    0 2px 6px rgba(0, 0, 0, 0.04);
-  padding: 10px 0;
-  min-width: 220px;
+    0 8px 24px rgba(0, 0, 0, 0.12),
+    0 2px 6px rgba(0, 0, 0, 0.06);
+  padding: 6px 0;
+  min-width: 200px;
   font-size: 13px;
   line-height: 1;
   user-select: none;
@@ -198,19 +198,19 @@ const MenuList: any = defineComponent({
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 16px;
-  height: 36px;
+  gap: 8px;
+  padding: 0 12px;
+  height: 30px;
   cursor: pointer;
   color: #1D2129;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.12s ease, color 0.12s ease;
   white-space: nowrap;
-  margin: 0 10px;
-  border-radius: 8px;
+  margin: 0 4px;
+  border-radius: 4px;
 }
 
 .menu-item:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: rgba(0, 0, 0, 0.05);
   color: #1D2129;
 }
 
@@ -258,7 +258,7 @@ const MenuList: any = defineComponent({
   margin-left: auto;
   padding-left: 8px;
   transform: scale(0.75);
-  opacity: 0.6;
+  opacity: 0.5;
   transition: opacity 0.12s;
 }
 
@@ -270,36 +270,36 @@ const MenuList: any = defineComponent({
 
 .menu-divider {
   height: 1px;
-  background: rgba(0, 0, 0, 0.08);
-  margin: 6px 16px;
+  background: rgba(0, 0, 0, 0.06);
+  margin: 4px 12px;
   list-style: none;
 }
 
 /* 子菜单 */
 .menu-submenu {
   position: absolute;
-  left: calc(100% - 8px);
+  left: calc(100% - 4px);
   top: -4px;
   background: #FFFFFF;
   backdrop-filter: blur(24px) saturate(1.6);
   -webkit-backdrop-filter: blur(24px) saturate(1.6);
-  border-radius: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
   box-shadow:
     0 0 0 0.5px rgba(0, 0, 0, 0.04),
-    0 8px 24px rgba(0, 0, 0, 0.08),
-    0 2px 6px rgba(0, 0, 0, 0.04);
-  padding: 8px 0;
+    0 8px 24px rgba(0, 0, 0, 0.12),
+    0 2px 6px rgba(0, 0, 0, 0.06);
+  padding: 6px 0;
   min-width: 180px;
   z-index: 10000;
   overflow: hidden;
 }
 
 .menu-nested .menu-item {
-  height: 34px;
+  height: 28px;
   font-size: 12px;
-  padding: 0 14px;
-  margin: 0 10px;
+  padding: 0 12px;
+  margin: 0 4px;
 }
 
 /* 动画 */
