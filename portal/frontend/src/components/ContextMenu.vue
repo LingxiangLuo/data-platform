@@ -171,18 +171,13 @@ const MenuList: any = defineComponent({
 .context-menu {
   position: fixed;
   z-index: 9999;
-  background: #FFFFFF;
-  backdrop-filter: blur(32px) saturate(1.8);
-  -webkit-backdrop-filter: blur(32px) saturate(1.8);
-  border-radius: 10px;
-  border: 0.5px solid rgba(0, 0, 0, 0.08);
-  box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.03),
-    0 4px 12px rgba(0, 0, 0, 0.08),
-    0 12px 36px rgba(0, 0, 0, 0.14);
-  padding: 8px 0;
-  min-width: 220px;
-  font-size: 13px;
+  background: #fff;
+  border-radius: 6px;
+  border: 1px solid #e5e5e5;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12), 0 0 1px rgba(0, 0, 0, 0.08);
+  padding: 4px 0;
+  min-width: 180px;
+  font-size: 12px;
   line-height: 1;
   user-select: none;
   overflow: hidden;
@@ -198,50 +193,49 @@ const MenuList: any = defineComponent({
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 14px;
-  height: 28px;
+  gap: 8px;
+  padding: 0 24px 0 12px;
+  height: 26px;
   cursor: pointer;
-  color: #1D2129;
-  transition: background 0.1s ease, color 0.1s ease;
+  color: #1d1d1d;
+  transition: background 0.08s;
   white-space: nowrap;
-  margin: 0;
-  border-radius: 0;
+  margin: 1px 4px;
+  border-radius: 4px;
 }
 
 .menu-item:hover {
-  background: rgba(0, 0, 0, 0.04);
-  color: #1D2129;
+  background: #f0f0f0;
 }
 
 .menu-item.menu-active {
-  background: #7B61FF;
-  color: #fff;
+  background: #e8e8e8;
+  color: #1d1d1d;
 }
 
 .menu-item.menu-danger {
-  color: #F53F3F;
+  color: #d13438;
 }
 
 .menu-item.menu-danger:hover {
-  background: rgba(245, 63, 63, 0.06);
-  color: #F53F3F;
+  background: #fde7e9;
+  color: #d13438;
 }
 
 .menu-item.menu-danger.menu-active {
-  background: #F53F3F;
+  background: #d13438;
   color: #fff;
 }
 
 .menu-item.menu-disabled {
-  color: #C9CDD4;
-  cursor: not-allowed;
+  color: #a0a0a0;
+  cursor: default;
 }
 
 .menu-item.menu-disabled:hover,
 .menu-item.menu-disabled.menu-active {
   background: transparent;
-  color: #C9CDD4;
+  color: #a0a0a0;
 }
 
 .menu-label {
@@ -252,25 +246,21 @@ const MenuList: any = defineComponent({
 }
 
 .menu-arrow {
-  font-size: 9px;
-  color: #86909C;
+  font-size: 8px;
+  color: #666;
   flex-shrink: 0;
   margin-left: auto;
-  padding-left: 8px;
-  transform: scale(0.8);
-  opacity: 0.45;
-  transition: opacity 0.1s;
+  transform: scale(0.7);
 }
 
 .menu-item:hover .menu-arrow,
 .menu-item.menu-active .menu-arrow {
-  opacity: 1;
-  color: inherit;
+  color: #333;
 }
 
 .menu-divider {
   height: 1px;
-  background: rgba(0, 0, 0, 0.06);
+  background: #e8e8e8;
   margin: 4px 0;
   list-style: none;
 }
@@ -279,45 +269,38 @@ const MenuList: any = defineComponent({
 .menu-submenu {
   position: absolute;
   left: 100%;
-  top: -6px;
-  background: #FFFFFF;
-  backdrop-filter: blur(32px) saturate(1.8);
-  -webkit-backdrop-filter: blur(32px) saturate(1.8);
-  border-radius: 10px;
-  border: 0.5px solid rgba(0, 0, 0, 0.08);
-  box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.03),
-    0 4px 12px rgba(0, 0, 0, 0.08),
-    0 12px 36px rgba(0, 0, 0, 0.14);
-  padding: 8px 0;
-  min-width: 180px;
+  top: -4px;
+  background: #fff;
+  border-radius: 6px;
+  border: 1px solid #e5e5e5;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12), 0 0 1px rgba(0, 0, 0, 0.08);
+  padding: 4px 0;
+  min-width: 160px;
   z-index: 10000;
   overflow: hidden;
 }
 
 .menu-nested .menu-item {
-  height: 26px;
+  height: 24px;
   font-size: 12px;
-  padding: 0 14px;
-  margin: 0;
-  border-radius: 0;
+  padding: 0 20px 0 12px;
+  margin: 1px 4px;
+  border-radius: 4px;
 }
 
 /* 动画 */
 .menu-fade-enter-active,
 .menu-fade-leave-active {
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  transition: opacity 0.1s ease;
 }
 
 .menu-fade-enter-from,
 .menu-fade-leave-to {
   opacity: 0;
-  transform: scale(0.97);
 }
 
 .menu-fade-enter-to,
 .menu-fade-leave-from {
   opacity: 1;
-  transform: scale(1);
 }
 </style>

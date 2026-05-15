@@ -597,6 +597,27 @@ def set_component_status(
     return {"message": f"状态已更新为 {STATUS_LABELS.get(new_status, new_status)}", **_serialize(c)}
 
 
+@router.post("/{comp_id}/resume")
+def resume_component(
+    comp_id: int,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """从暂停状态恢复组件"""
+    c = _get_or_404(db, comp_id)
+    if c.status != STATUS_PAUSED:
+        raise HTTPException(status_code=400, detail="组件未处于暂停状态")
+    prev = getattr(c, 'previous_status', None) or STATUS_DEVELOPING
+    c.status = prev
+    try:
+        c.previous_status = None
+    except Exception:
+        pass
+    db.commit()
+    db.refresh(c)
+    return {"message": f"已恢复到 {STATUS_LABELS.get(prev, prev)}", **_serialize(c)}
+
+
 # ===== 移动与排序 =====
 
 class MoveComponentRequest(BaseModel):

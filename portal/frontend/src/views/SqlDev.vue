@@ -94,7 +94,9 @@
                   {
                     'comp-open': isTabActive(node.id),
                     'dragging': dragState.draggingId === node.id,
-                    'drop-target': dragState.dropTargetId === node.id && dragState.dropKind === 'component'
+                    'drop-target': dragState.dropTargetId === node.id && dragState.dropKind === 'component',
+                    'drop-before': dragState.dropTargetId === node.id && dragState.dropPosition === 'before',
+                    'drop-after': dragState.dropTargetId === node.id && dragState.dropPosition === 'after'
                   }
                 ]"
                 :style="{ paddingLeft: `${14 + node.depth * 16}px` }"
@@ -361,6 +363,7 @@ const dragState = reactive({
   dragFolderId: null as number | null,
   dropTargetId: null as number | string | null,
   dropKind: null as 'component' | 'folder' | 'group' | null,
+  dropPosition: null as 'before' | 'after' | 'inside' | null,
 })
 
 let tabSeq = 0
@@ -385,6 +388,7 @@ function flatTree(type: string): TreeNode[] {
   const kw = searchKw.value.toLowerCase()
   const searching = !!kw
   const typeFolders = folders.value.filter(f => f.type === type)
+  const validFolderIds = new Set(typeFolders.map(f => f.id))
   const typeComps = components.value.filter(c => {
     if (c.type !== type) return false
     if (kw && !c.name.toLowerCase().includes(kw)) return false
@@ -412,8 +416,14 @@ function flatTree(type: string): TreeNode[] {
         traverse(f.id, depth + 1)
       }
     }
-    // Child components
-    const childComps = typeComps.filter(c => (c.folder_id ?? null) === parentId)
+    // Child components (orphaned components with invalid folder_id treated as root)
+    const childComps = typeComps.filter(c => {
+      const fid = c.folder_id ?? null
+      if (parentId === null) {
+        return fid === null || !validFolderIds.has(fid)
+      }
+      return fid === parentId
+    })
     for (const c of childComps) {
       result.push({ nodeKey: `c-${c.id}`, kind: 'component', id: c.id, name: c.name, depth, folderType: type, data: c })
     }
@@ -949,6 +959,7 @@ function onDragOver(e: DragEvent, targetNode: TreeNode) {
   if (dragState.draggingId === targetNode.id) {
     dragState.dropTargetId = null
     dragState.dropKind = null
+    dragState.dropPosition = null
     e.dataTransfer!.dropEffect = 'none'
     return
   }
@@ -957,6 +968,7 @@ function onDragOver(e: DragEvent, targetNode: TreeNode) {
   if (dragState.dragFolderType !== targetNode.folderType) {
     dragState.dropTargetId = null
     dragState.dropKind = null
+    dragState.dropPosition = null
     e.dataTransfer!.dropEffect = 'none'
     return
   }
@@ -965,6 +977,7 @@ function onDragOver(e: DragEvent, targetNode: TreeNode) {
   if (dragState.dragKind === 'folder' && targetNode.kind === 'component') {
     dragState.dropTargetId = null
     dragState.dropKind = null
+    dragState.dropPosition = null
     e.dataTransfer!.dropEffect = 'none'
     return
   }
@@ -974,6 +987,7 @@ function onDragOver(e: DragEvent, targetNode: TreeNode) {
     if (dragState.draggingId! === targetNode.id || folderContains(dragState.draggingId!, targetNode.id)) {
       dragState.dropTargetId = null
       dragState.dropKind = null
+      dragState.dropPosition = null
       e.dataTransfer!.dropEffect = 'none'
       return
     }
@@ -982,6 +996,15 @@ function onDragOver(e: DragEvent, targetNode: TreeNode) {
   e.dataTransfer!.dropEffect = 'move'
   dragState.dropTargetId = targetNode.id
   dragState.dropKind = targetNode.kind
+
+  // 计算插入位置：文件夹 = inside，组件 = 根据鼠标位置判断 before/after
+  if (targetNode.kind === 'folder') {
+    dragState.dropPosition = 'inside'
+  } else {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const midY = rect.top + rect.height / 2
+    dragState.dropPosition = e.clientY < midY ? 'before' : 'after'
+  }
 }
 
 async function onDrop(e: DragEvent, targetNode: TreeNode) {
@@ -1020,25 +1043,30 @@ async function onDrop(e: DragEvent, targetNode: TreeNode) {
   dragState.dragFolderId = null
   dragState.dropTargetId = null
   dragState.dropKind = null
+  dragState.dropPosition = null
 }
 
 /** 拖拽经过类型组标题：只允许同类型组件移回根目录 */
 function onDragOverGroup(e: DragEvent, groupType: string) {
   e.preventDefault()
+  if (dragState.dragFolderType !== groupType) {
     e.dataTransfer!.dropEffect = 'none'
     dragState.dropTargetId = null
     dragState.dropKind = null
+    dragState.dropPosition = null
     return
   }
   if (dragState.dragKind === 'folder') {
     e.dataTransfer!.dropEffect = 'none'
     dragState.dropTargetId = null
     dragState.dropKind = null
+    dragState.dropPosition = null
     return
   }
   e.dataTransfer!.dropEffect = 'move'
   dragState.dropTargetId = groupType
   dragState.dropKind = 'group'
+  dragState.dropPosition = null
 }
 
 /** 组件拖到类型组标题 = 移到根目录 */
@@ -1057,6 +1085,7 @@ async function onDropGroup(e: DragEvent, groupType: string) {
   dragState.dragFolderId = null
   dragState.dropTargetId = null
   dragState.dropKind = null
+  dragState.dropPosition = null
 }
 
 function onDragEnd() {
@@ -1066,6 +1095,7 @@ function onDragEnd() {
   dragState.dragFolderId = null
   dragState.dropTargetId = null
   dragState.dropKind = null
+  dragState.dropPosition = null
 }
 
 async function doMoveComponent(compId: number, folderId: number) {
@@ -1424,13 +1454,19 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 }
 .drop-target {
   background: #EAF1FF !important;
-  box-shadow: inset 0 0 0 1px #2B5AED;
   border-radius: 4px;
 }
 .folder-node.drop-target {
   background: #EAF1FF !important;
+  box-shadow: inset 0 0 0 1px #2B5AED;
 }
 .comp-node.drop-target {
-  background: #EAF1FF !important;
+  background: transparent !important;
+}
+.comp-node.drop-before {
+  box-shadow: inset 0 2px 0 0 #2B5AED;
+}
+.comp-node.drop-after {
+  box-shadow: inset 0 -2px 0 0 #2B5AED;
 }
 </style>
