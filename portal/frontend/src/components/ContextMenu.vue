@@ -80,6 +80,7 @@ watch(() => props.visible, (v) => {
 </script>
 
 <script lang="ts">
+// 子菜单列表（递归组件）
 import { h, defineComponent } from 'vue'
 
 const MenuList: any = defineComponent({
@@ -113,7 +114,7 @@ const MenuList: any = defineComponent({
     function onMouseLeave() {
       hideTimer = setTimeout(() => {
         activeKey.value = null
-      }, 150)
+      }, 300)
     }
 
     return (): any => h('ul', { class: ['menu-list', { 'menu-nested': props.nested }] },
@@ -170,18 +171,17 @@ const MenuList: any = defineComponent({
 .context-menu {
   position: fixed;
   z-index: 9999;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(20px) saturate(1.8);
-  -webkit-backdrop-filter: blur(20px) saturate(1.8);
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: #F5F5F7;
+  backdrop-filter: blur(24px) saturate(1.6);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.04);
   box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.04),
-    0 4px 8px rgba(0, 0, 0, 0.04),
-    0 12px 24px rgba(0, 0, 0, 0.08),
-    0 24px 48px rgba(0, 0, 0, 0.06);
-  padding: 6px 0;
-  min-width: 180px;
+    0 0 0 0.5px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.08),
+    0 2px 6px rgba(0, 0, 0, 0.04);
+  padding: 8px 0;
+  min-width: 200px;
   font-size: 13px;
   line-height: 1;
   user-select: none;
@@ -200,20 +200,24 @@ const MenuList: any = defineComponent({
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 0 14px;
-  height: 32px;
+  padding: 0 16px;
+  height: 34px;
   cursor: pointer;
   color: #1D2129;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background 0.15s ease, color 0.15s ease;
   white-space: nowrap;
-  margin: 0 6px;
-  border-radius: 6px;
+  margin: 0 8px;
+  border-radius: 8px;
 }
 
-.menu-item:hover,
+.menu-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: #1D2129;
+}
+
 .menu-item.menu-active {
-  background: rgba(43, 90, 237, 0.08);
-  color: #2B5AED;
+  background: #7B61FF;
+  color: #fff;
 }
 
 .menu-item.menu-danger {
@@ -225,12 +229,18 @@ const MenuList: any = defineComponent({
   color: #F53F3F;
 }
 
+.menu-item.menu-danger.menu-active {
+  background: #F53F3F;
+  color: #fff;
+}
+
 .menu-item.menu-disabled {
   color: #C9CDD4;
   cursor: not-allowed;
 }
 
-.menu-item.menu-disabled:hover {
+.menu-item.menu-disabled:hover,
+.menu-item.menu-disabled.menu-active {
   background: transparent;
   color: #C9CDD4;
 }
@@ -247,61 +257,60 @@ const MenuList: any = defineComponent({
   color: #86909C;
   flex-shrink: 0;
   transform: scale(0.75);
-  opacity: 0.7;
+  opacity: 0.6;
   transition: opacity 0.12s;
 }
 
 .menu-item:hover .menu-arrow,
 .menu-item.menu-active .menu-arrow {
   opacity: 1;
-  color: #2B5AED;
+  color: inherit;
 }
 
 .menu-divider {
   height: 1px;
-  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.06) 10%, rgba(0,0,0,0.06) 90%, transparent 100%);
-  margin: 5px 12px;
+  background: rgba(0, 0, 0, 0.06);
+  margin: 6px 0;
   list-style: none;
 }
 
 /* 子菜单 */
 .menu-submenu {
   position: absolute;
-  left: calc(100% - 6px);
-  top: -6px;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(20px) saturate(1.8);
-  -webkit-backdrop-filter: blur(20px) saturate(1.8);
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.4);
+  left: calc(100% - 8px);
+  top: -4px;
+  background: #FFFFFF;
+  backdrop-filter: blur(24px) saturate(1.6);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.04);
   box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.04),
-    0 4px 8px rgba(0, 0, 0, 0.04),
-    0 12px 24px rgba(0, 0, 0, 0.08),
-    0 24px 48px rgba(0, 0, 0, 0.06);
-  padding: 6px 0;
-  min-width: 160px;
+    0 0 0 0.5px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.08),
+    0 2px 6px rgba(0, 0, 0, 0.04);
+  padding: 8px 0;
+  min-width: 180px;
   z-index: 10000;
   overflow: hidden;
 }
 
 .menu-nested .menu-item {
-  height: 30px;
+  height: 32px;
   font-size: 12px;
-  padding: 0 12px;
-  margin: 0 6px;
+  padding: 0 14px;
+  margin: 0 8px;
 }
 
 /* 动画 */
 .menu-fade-enter-active,
 .menu-fade-leave-active {
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 .menu-fade-enter-from,
 .menu-fade-leave-to {
   opacity: 0;
-  transform: scale(0.97);
+  transform: scale(0.96);
 }
 
 .menu-fade-enter-to,
