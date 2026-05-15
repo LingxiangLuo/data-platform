@@ -172,16 +172,16 @@ const MenuList: any = defineComponent({
   position: fixed;
   z-index: 9999;
   background: #FFFFFF;
-  backdrop-filter: blur(24px) saturate(1.6);
-  -webkit-backdrop-filter: blur(24px) saturate(1.6);
-  border-radius: 8px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  backdrop-filter: blur(32px) saturate(1.8);
+  -webkit-backdrop-filter: blur(32px) saturate(1.8);
+  border-radius: 10px;
+  border: 0.5px solid rgba(0, 0, 0, 0.08);
   box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.04),
-    0 8px 24px rgba(0, 0, 0, 0.12),
-    0 2px 6px rgba(0, 0, 0, 0.06);
-  padding: 6px 0;
-  min-width: 200px;
+    0 0 0 0.5px rgba(0, 0, 0, 0.03),
+    0 4px 12px rgba(0, 0, 0, 0.08),
+    0 12px 36px rgba(0, 0, 0, 0.14);
+  padding: 8px 0;
+  min-width: 220px;
   font-size: 13px;
   line-height: 1;
   user-select: none;
@@ -198,19 +198,19 @@ const MenuList: any = defineComponent({
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  height: 30px;
+  gap: 10px;
+  padding: 0 14px;
+  height: 28px;
   cursor: pointer;
   color: #1D2129;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background 0.1s ease, color 0.1s ease;
   white-space: nowrap;
-  margin: 0 4px;
-  border-radius: 4px;
+  margin: 0;
+  border-radius: 0;
 }
 
 .menu-item:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: rgba(0, 0, 0, 0.04);
   color: #1D2129;
 }
 
@@ -224,7 +224,7 @@ const MenuList: any = defineComponent({
 }
 
 .menu-item.menu-danger:hover {
-  background: rgba(245, 63, 63, 0.08);
+  background: rgba(245, 63, 63, 0.06);
   color: #F53F3F;
 }
 
@@ -252,14 +252,14 @@ const MenuList: any = defineComponent({
 }
 
 .menu-arrow {
-  font-size: 8px;
+  font-size: 9px;
   color: #86909C;
   flex-shrink: 0;
   margin-left: auto;
   padding-left: 8px;
-  transform: scale(0.75);
-  opacity: 0.5;
-  transition: opacity 0.12s;
+  transform: scale(0.8);
+  opacity: 0.45;
+  transition: opacity 0.1s;
 }
 
 .menu-item:hover .menu-arrow,
@@ -271,47 +271,48 @@ const MenuList: any = defineComponent({
 .menu-divider {
   height: 1px;
   background: rgba(0, 0, 0, 0.06);
-  margin: 4px 12px;
+  margin: 4px 0;
   list-style: none;
 }
 
 /* 子菜单 */
 .menu-submenu {
   position: absolute;
-  left: calc(100% - 4px);
-  top: -4px;
+  left: 100%;
+  top: -6px;
   background: #FFFFFF;
-  backdrop-filter: blur(24px) saturate(1.6);
-  -webkit-backdrop-filter: blur(24px) saturate(1.6);
-  border-radius: 8px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  backdrop-filter: blur(32px) saturate(1.8);
+  -webkit-backdrop-filter: blur(32px) saturate(1.8);
+  border-radius: 10px;
+  border: 0.5px solid rgba(0, 0, 0, 0.08);
   box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.04),
-    0 8px 24px rgba(0, 0, 0, 0.12),
-    0 2px 6px rgba(0, 0, 0, 0.06);
-  padding: 6px 0;
+    0 0 0 0.5px rgba(0, 0, 0, 0.03),
+    0 4px 12px rgba(0, 0, 0, 0.08),
+    0 12px 36px rgba(0, 0, 0, 0.14);
+  padding: 8px 0;
   min-width: 180px;
   z-index: 10000;
   overflow: hidden;
 }
 
 .menu-nested .menu-item {
-  height: 28px;
+  height: 26px;
   font-size: 12px;
-  padding: 0 12px;
-  margin: 0 4px;
+  padding: 0 14px;
+  margin: 0;
+  border-radius: 0;
 }
 
 /* 动画 */
 .menu-fade-enter-active,
 .menu-fade-leave-active {
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition: opacity 0.12s ease, transform 0.12s ease;
 }
 
 .menu-fade-enter-from,
 .menu-fade-leave-to {
   opacity: 0;
-  transform: scale(0.96);
+  transform: scale(0.97);
 }
 
 .menu-fade-enter-to,

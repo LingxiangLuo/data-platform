@@ -13,7 +13,13 @@
       <div class="comp-tree">
         <template v-for="grp in typeGroups" :key="grp.type">
           <!-- 类型组标题 -->
-          <div class="grp-header" @click="toggleGrp(grp.type)">
+          <div
+            class="grp-header"
+            :class="{ 'drop-target': dragState.dropTargetId === grp.type && dragState.dropKind === 'group' }"
+            @click="toggleGrp(grp.type)"
+            @dragover.prevent="onDragOverGroup($event, grp.type)"
+            @drop.prevent="onDropGroup($event, grp.type)"
+          >
             <icon-down v-if="!grpCollapsed[grp.type]" class="caret" />
             <icon-right v-else class="caret" />
             <span class="grp-label">{{ grp.label }}</span>
@@ -351,8 +357,8 @@ const clipboard = ref<{ kind: 'component' | 'folder'; action: 'copy' | 'cut'; id
 const dragState = reactive({
   draggingId: null as number | null,
   dragKind: null as 'component' | 'folder' | null,
-  dropTargetId: null as number | null,
-  dropKind: null as 'component' | 'folder' | null,
+  dropTargetId: null as number | string | null,
+  dropKind: null as 'component' | 'folder' | 'group' | null,
 })
 
 let tabSeq = 0
@@ -825,7 +831,7 @@ async function onMenuSelect(key: string) {
     if (targetNode.kind === 'component') await setCompStatus(targetNode.data, status)
   } else if (key.startsWith('move-to-')) {
     const folderId = parseInt(key.replace('move-to-', ''), 10)
-    if (targetNode.kind === 'component') await doMoveComponent(targetNode.data.id, folderId || null)
+    if (targetNode.kind === 'component') await doMoveComponent(targetNode.data.id, folderId)
   } else if (key.startsWith('new-')) {
     const lang = key.replace('new-', '') as Language
     const folderId = targetNode.kind === 'folder' ? targetNode.id : (targetNode.data?.folder_id ?? null)
@@ -874,7 +880,7 @@ async function doPaste(targetNode: TreeNode) {
         openComp(res)
       } catch {}
     } else if (cb.action === 'cut') {
-      await doMoveComponent(cb.id, targetFolderId)
+      await doMoveComponent(cb.id, targetFolderId ?? 0)
       clipboard.value = null
     }
   } else if (cb.kind === 'folder') {
@@ -923,14 +929,57 @@ function onDragStart(e: DragEvent, node: TreeNode) {
   }))
 }
 
+/** 检查拖拽文件夹是否包含目标文件夹（防止循环引用） */
+function folderContains(parentId: number, childId: number): boolean {
+  const children = folders.value.filter(f => f.parent_id === parentId)
+  for (const child of children) {
+    if (child.id === childId) return true
+    if (folderContains(child.id, childId)) return true
+  }
+  return false
+}
+
 function onDragOver(e: DragEvent, targetNode: TreeNode) {
   e.preventDefault()
-  e.dataTransfer!.dropEffect = 'move'
+  const dataStr = e.dataTransfer!.getData('application/json')
+  if (!dataStr) return
+  const data = JSON.parse(dataStr)
+
+  // 同节点不处理
   if (dragState.draggingId === targetNode.id) {
     dragState.dropTargetId = null
     dragState.dropKind = null
+    e.dataTransfer!.dropEffect = 'none'
     return
   }
+
+  // 跨类型阻止
+  if (data.folderType !== targetNode.folderType) {
+    dragState.dropTargetId = null
+    dragState.dropKind = null
+    e.dataTransfer!.dropEffect = 'none'
+    return
+  }
+
+  // 文件夹不能拖到组件上
+  if (data.kind === 'folder' && targetNode.kind === 'component') {
+    dragState.dropTargetId = null
+    dragState.dropKind = null
+    e.dataTransfer!.dropEffect = 'none'
+    return
+  }
+
+  // 文件夹拖到文件夹：阻止循环引用（不能拖到自身或其子文件夹）
+  if (data.kind === 'folder' && targetNode.kind === 'folder') {
+    if (data.id === targetNode.id || folderContains(data.id, targetNode.id)) {
+      dragState.dropTargetId = null
+      dragState.dropKind = null
+      e.dataTransfer!.dropEffect = 'none'
+      return
+    }
+  }
+
+  e.dataTransfer!.dropEffect = 'move'
   dragState.dropTargetId = targetNode.id
   dragState.dropKind = targetNode.kind
 }
@@ -941,24 +990,69 @@ async function onDrop(e: DragEvent, targetNode: TreeNode) {
   if (!dataStr) return
   const data = JSON.parse(dataStr)
 
+  // 跨类型忽略
+  if (data.folderType !== targetNode.folderType) return
+
   if (data.kind === 'component' && targetNode.kind === 'folder') {
     // 组件拖到文件夹 = 移动
     await doMoveComponent(data.id, targetNode.id)
   } else if (data.kind === 'component' && targetNode.kind === 'component') {
-    // 组件拖到组件 = 同文件夹排序
+    // 组件拖到组件
     if (data.folderId === targetNode.data?.folder_id) {
+      // 同文件夹 = 排序
       await doReorderBetween(data.id, targetNode.id)
     } else {
-      // 跨文件夹，先移到目标文件夹，再排序
-      await doMoveComponent(data.id, targetNode.data?.folder_id ?? null)
-      await nextTick()
+      // 跨文件夹 = 移到目标文件夹（根目录用 0）
+      await doMoveComponent(data.id, targetNode.data?.folder_id ?? 0)
+      // 等待数据刷新后再排序
+      await loadComponents()
       await doReorderBetween(data.id, targetNode.id)
     }
   } else if (data.kind === 'folder' && targetNode.kind === 'folder') {
     // 文件夹拖到文件夹 = 嵌套移动
+    if (data.id === targetNode.id || folderContains(data.id, targetNode.id)) return
     await doMoveFolder(data.id, targetNode.id)
   }
 
+  dragState.draggingId = null
+  dragState.dragKind = null
+  dragState.dropTargetId = null
+  dragState.dropKind = null
+}
+
+/** 拖拽经过类型组标题：只允许同类型组件移回根目录 */
+function onDragOverGroup(e: DragEvent, groupType: string) {
+  e.preventDefault()
+  const dataStr = e.dataTransfer!.getData('application/json')
+  if (!dataStr) return
+  const data = JSON.parse(dataStr)
+  if (data.folderType !== groupType) {
+    e.dataTransfer!.dropEffect = 'none'
+    dragState.dropTargetId = null
+    dragState.dropKind = null
+    return
+  }
+  if (data.kind === 'folder') {
+    e.dataTransfer!.dropEffect = 'none'
+    dragState.dropTargetId = null
+    dragState.dropKind = null
+    return
+  }
+  e.dataTransfer!.dropEffect = 'move'
+  dragState.dropTargetId = groupType
+  dragState.dropKind = 'group'
+}
+
+/** 组件拖到类型组标题 = 移到根目录 */
+async function onDropGroup(e: DragEvent, groupType: string) {
+  e.preventDefault()
+  const dataStr = e.dataTransfer!.getData('application/json')
+  if (!dataStr) return
+  const data = JSON.parse(dataStr)
+  if (data.folderType !== groupType) return
+  if (data.kind === 'component') {
+    await doMoveComponent(data.id, 0)
+  }
   dragState.draggingId = null
   dragState.dragKind = null
   dragState.dropTargetId = null
@@ -972,9 +1066,9 @@ function onDragEnd() {
   dragState.dropKind = null
 }
 
-async function doMoveComponent(compId: number, folderId: number | null) {
+async function doMoveComponent(compId: number, folderId: number) {
   try {
-    await moveComponent(compId, folderId ?? undefined)
+    await moveComponent(compId, folderId)
     Message.success('移动成功')
     await loadComponents()
   } catch {}
@@ -1005,9 +1099,9 @@ async function doReorderBetween(dragId: number, targetId: number) {
   } catch {}
 }
 
-async function doMoveFolder(folderId: number, parentId: number | null) {
+async function doMoveFolder(folderId: number, parentId: number) {
   try {
-    await moveComponentFolder(folderId, parentId ?? undefined)
+    await moveComponentFolder(folderId, parentId)
     Message.success('移动成功')
     await loadFolders()
   } catch {}
