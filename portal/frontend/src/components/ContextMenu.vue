@@ -16,7 +16,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onUnmounted, h, defineComponent } from 'vue'
 
 export interface MenuItem {
   key?: string
@@ -63,20 +63,22 @@ function onSelect(key: string) {
 watch(() => props.visible, (v) => {
   if (v) {
     nextTick(() => {
-      const handler = (e: MouseEvent) => {
-        if (!menuRef.value?.contains(e.target as Node)) {
-          close()
-          document.removeEventListener('mousedown', handler)
-        }
-      }
-      document.addEventListener('mousedown', handler)
+      document.addEventListener('mousedown', outsideHandler)
     })
+  } else {
+    document.removeEventListener('mousedown', outsideHandler)
   }
 })
-</script>
 
-<script lang="ts">
-import { h, defineComponent, ref } from 'vue'
+function outsideHandler(e: MouseEvent) {
+  if (!menuRef.value?.contains(e.target as Node)) {
+    close()
+  }
+}
+
+onUnmounted(() => {
+  document.removeEventListener('mousedown', outsideHandler)
+})
 
 const MenuList: any = defineComponent({
   name: 'MenuList',
@@ -85,13 +87,13 @@ const MenuList: any = defineComponent({
     nested: { type: Boolean, default: false },
   },
   emits: ['select'],
-  setup(props: { items: MenuItem[]; nested: boolean }, { emit }: { emit: (e: 'select', key: string) => void }) {
+  setup(menuProps: { items: MenuItem[]; nested: boolean }, { emit: menuEmit }: { emit: (e: 'select', key: string) => void }) {
     const activeKey = ref<string | null>(null)
     let hideTimer: any = null
 
     function onItemClick(item: MenuItem) {
       if (item.disabled || item.children?.length) return
-      emit('select', item.key!)
+      menuEmit('select', item.key!)
     }
 
     function onMouseEnter(item: MenuItem) {
@@ -103,8 +105,8 @@ const MenuList: any = defineComponent({
       hideTimer = setTimeout(() => { activeKey.value = null }, 300)
     }
 
-    return (): any => h('ul', { class: ['cm-list', { 'cm-nested': props.nested }] },
-      props.items.map((item): any => {
+    return (): any => h('ul', { class: ['cm-list', { 'cm-nested': menuProps.nested }] },
+      menuProps.items.map((item): any => {
         if (item.divider) {
           return h('li', { class: 'cm-divider' })
         }
@@ -136,7 +138,7 @@ const MenuList: any = defineComponent({
             h(MenuList, {
               items: item.children!,
               nested: true,
-              onSelect: (key: string) => emit('select', key),
+              onSelect: (key: string) => menuEmit('select', key),
             }),
           ]),
         ])
@@ -165,7 +167,7 @@ const MenuList: any = defineComponent({
   font-size: 13px;
   line-height: 1;
   user-select: none;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .cm-list {
@@ -250,7 +252,7 @@ const MenuList: any = defineComponent({
 
 .cm-submenu {
   position: absolute;
-  left: 100%;
+  left: calc(100% + 2px);
   top: -6px;
   background: #ffffff;
   border-radius: 8px;
@@ -259,7 +261,7 @@ const MenuList: any = defineComponent({
   padding: 6px 0;
   min-width: 180px;
   z-index: 10000;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .cm-nested .cm-item {

@@ -20,19 +20,14 @@
             @dragover.prevent="onDragOverGroup($event, grp.type)"
             @drop.prevent="onDropGroup($event, grp.type)"
           >
-            <icon-down v-if="!grpCollapsed[grp.type]" class="caret" />
-            <icon-right v-else class="caret" />
+            <span class="caret">{{ grpCollapsed[grp.type] ? "▸" : "▾" }}</span>
             <span class="grp-label">{{ grp.label }}</span>
             <span class="grp-count">{{ compCountByType(grp.type) }}</span>
             <a-tooltip content="新建文件夹">
-              <span class="grp-action" @click.stop="startNewFolder(grp.type, null)">
-                <icon-folder-add />
-              </span>
+              <span class="grp-action" @click.stop="startNewFolder(grp.type, null)">⊞</span>
             </a-tooltip>
             <a-tooltip content="新建组件">
-              <span class="grp-action" @click.stop="newBlankTab(grp.type as Language)">
-                <icon-plus />
-              </span>
+              <span class="grp-action" @click.stop="newBlankTab(grp.type as Language)">＋</span>
             </a-tooltip>
           </div>
 
@@ -55,10 +50,10 @@
                 @drop.prevent="onDrop($event, node)"
               >
                 <span class="node-toggle" @click="toggleFolder(node.id)">
-                  <icon-down v-if="!folderCollapsed[node.id]" class="caret" />
-                  <icon-right v-else class="caret" />
+                  <span v-if="!folderCollapsed[node.id]" class="caret">▾</span>
+                  <span v-else class="caret">▸</span>
                 </span>
-                <icon-folder class="folder-icon" />
+                <span class="folder-icon">📁</span>
                 <span v-if="renamingFolderId !== node.id" class="node-name" @dblclick="startRename(node)">
                   {{ node.name }}
                 </span>
@@ -74,14 +69,14 @@
                   ref="renameInputRef"
                 />
                 <span class="node-actions">
-                  <a-tooltip v-if="node.depth < 2" content="新建子文件夹">
-                    <span class="node-action" @click.stop="startNewFolder(node.folderType, node.id)"><icon-folder-add /></span>
+                  <a-tooltip v-if="node.depth < 3" content="新建子文件夹">
+                    <span class="node-action" @click.stop="startNewFolder(node.folderType, node.id)">⊞</span>
                   </a-tooltip>
                   <a-tooltip content="新建组件">
-                    <span class="node-action" @click.stop="newBlankTab(node.folderType as Language, node.id)"><icon-plus /></span>
+                    <span class="node-action" @click.stop="newBlankTab(node.folderType as Language, node.id)">＋</span>
                   </a-tooltip>
                   <a-tooltip content="删除文件夹">
-                    <span class="node-action danger" @click.stop="deleteFolder(node.id)"><icon-delete /></span>
+                    <span class="node-action danger" @click.stop="deleteFolder(node.id)">×</span>
                   </a-tooltip>
                 </span>
               </div>
@@ -108,9 +103,7 @@
                 @dragover.prevent="onDragOver($event, node)"
                 @drop.prevent="onDrop($event, node)"
               >
-                <span :class="['lang-badge', `badge-${node.data.type}`]">
-                  {{ node.data.type.slice(0, 2).toUpperCase() }}
-                </span>
+                <LangIcon :type="node.data.type" :size="18" />
                 <span v-if="renamingCompId !== node.id" class="node-name">{{ node.name }}</span>
                 <a-input
                   v-else
@@ -156,9 +149,7 @@
               :class="['tab-item', { active: activeKey === tab.key }]"
               @click="switchTab(tab.key)"
             >
-              <span :class="['lang-badge-sm', `badge-${tab.language}`]">
-                {{ tab.language.slice(0, 2).toUpperCase() }}
-              </span>
+              <LangIcon :type="tab.language" :size="16" />
               <span class="tab-name">{{ tab.dirty ? '● ' : '' }}{{ tab.name }}</span>
               <span class="tab-close" @click.stop="closeTab(tab.key)">×</span>
             </div>
@@ -220,7 +211,9 @@
             <span class="result-info">
               <template v-if="running">运行中...</template>
               <template v-else-if="result">
-                <span v-if="result.type === 'table'" class="ok-text">✓ {{ result.row_count }} 行 · {{ result.duration_ms }}ms</span>
+                <span v-if="result.type === 'table'" class="ok-text">
+                  ✓ 共查询到 {{ result.row_count }} 行{{ result.row_count >= 2000 ? '（已达上限，仅展示前 2000 行）' : '' }} · {{ result.duration_ms }}ms
+                </span>
                 <span v-else-if="result.type === 'rowcount'" class="ok-text">✓ 影响 {{ result.affected }} 行 · {{ result.duration_ms }}ms</span>
                 <span v-else-if="result.type === 'log'" :class="result.ok ? 'ok-text' : 'err-text'">
                   {{ result.ok ? '✓' : '✗' }} exit {{ result.exit_code }} · {{ result.duration_ms }}ms
@@ -237,9 +230,9 @@
                 v-if="result.type === 'table'"
                 :columns="result.columns.map((c: string) => ({ title: c, dataIndex: c, ellipsis: true, width: 120 }))"
                 :data="result.rows"
-                :pagination="false"
+                :pagination="{ pageSize: 50, showTotal: true, size: 'mini' }"
                 size="mini"
-                :scroll="{ x: 'max-content', y: 200 }"
+                :scroll="{ x: 'max-content' }"
                 class="result-table"
               />
               <div v-else-if="result.type === 'rowcount'" class="result-text ok-text">
@@ -280,6 +273,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
+import LangIcon from '../components/LangIcon.vue'
 import { Message } from '@arco-design/web-vue'
 import {
   IconPlus, IconSearch, IconDown, IconRight, IconPlayArrow, IconSave, IconUpload,
@@ -314,6 +308,7 @@ const typeGroups = [
   { type: 'python', label: 'Python 脚本' },
   { type: 'shell', label: 'Shell 脚本' },
 ]
+
 
 const tabs = ref<Tab[]>([])
 const activeKey = ref('')
@@ -406,7 +401,9 @@ function flatTree(type: string): TreeNode[] {
 
   function traverse(parentId: number | null, depth: number) {
     // Child folders
-    const childFolders = typeFolders.filter(f => (f.parent_id ?? null) === parentId)
+    const childFolders = typeFolders
+      .filter(f => (f.parent_id ?? null) === parentId)
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id)
     for (const f of childFolders) {
       // 搜索时只显示有匹配项的文件夹
       if (searching && !folderHasMatch(f.id)) continue
@@ -424,6 +421,7 @@ function flatTree(type: string): TreeNode[] {
       }
       return fid === parentId
     })
+    childComps.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || b.id - a.id)
     for (const c of childComps) {
       result.push({ nodeKey: `c-${c.id}`, kind: 'component', id: c.id, name: c.name, depth, folderType: type, data: c })
     }
@@ -457,7 +455,12 @@ function openComp(c: any) {
     language: c.type as Language,
     componentId: c.id,
     folderId: c.folder_id ?? null,
-    datasourceId: cfg.datasource_id || c.datasource_id || undefined,
+    datasourceId: (() => {
+      const rawId = cfg.datasource_id || c.datasource_id || undefined
+      if (rawId == null) return undefined
+      const validIds = new Set(datasources.value.map((d: any) => d.id))
+      return validIds.has(rawId) ? rawId : undefined
+    })(),
     dirty: false,
   })
   switchTab(key)
@@ -509,7 +512,11 @@ async function confirmNewFolder() {
 function startRename(node: TreeNode) {
   renamingFolderId.value = node.id
   renameValue.value = node.name
-  nextTick(() => renameInputRef.value?.focus?.())
+  nextTick(() => {
+    const el = renameInputRef.value
+    if (Array.isArray(el)) el[0]?.focus?.()
+    else el?.focus?.()
+  })
 }
 
 async function submitRename(id: number) {
@@ -565,14 +572,25 @@ function statusTagStyle(s: string) {
     color: color,
   }
 }
+const STATUS_TRANSITIONS: Record<string, string[]> = {
+  draft:      ['developing', 'testing', 'deprecated', 'archived'],
+  developing: ['testing', 'paused', 'deprecated'],
+  testing:    ['reviewing', 'tested', 'paused', 'deprecated'],
+  reviewing:  ['tested', 'paused', 'developing'],
+  tested:     ['paused', 'testing'],
+  online:     ['offline', 'paused'],
+  offline:    ['online', 'archived', 'paused', 'developing'],
+  paused:     [],
+  deprecated: ['archived'],
+  archived:   [],
+}
 function manualStatusOptions(current: string) {
-  // 已暂停时，菜单仅显示恢复（在模板单独处理）
   if (current === 'paused') return []
-  // 已归档不可改
   if (current === 'archived') return []
-  return Object.entries(STATUS_DEFS)
-    .filter(([k, v]) => v.manual && k !== current)
-    .map(([k, v]) => ({ value: k, label: v.label, color: v.color }))
+  const allowed = STATUS_TRANSITIONS[current] ?? []
+  return allowed
+    .filter(k => STATUS_DEFS[k]?.manual)
+    .map(k => ({ value: k, label: STATUS_DEFS[k].label, color: STATUS_DEFS[k].color }))
 }
 
 async function setCompStatus(c: any, status: string) {
@@ -604,6 +622,17 @@ async function confirmDeleteComp(c: any) {
 async function runCode() {
   const tab = activeTab.value
   if (!tab) return
+// Convert list-of-lists rows to list-of-objects for a-table
+function normalizeResult(res: any): any {
+  if (res?.type === 'table' && Array.isArray(res.rows) && Array.isArray(res.columns)) {
+    const cols: string[] = res.columns
+    res.rows = res.rows.map((row: any[]) =>
+      Array.isArray(row) ? Object.fromEntries(cols.map((c, i) => [c, row[i]])) : row
+    )
+  }
+  return res
+}
+
   result.value = null
   if (tab.language === 'sql' && !tab.datasourceId) { Message.warning('请先选择数据源'); return }
   running.value = true
@@ -612,11 +641,11 @@ async function runCode() {
       const sel: string = editorRef.value?.getSelectedText?.() ?? ''
       const sql = (sel || tab.code).trim()
       if (!sql) { Message.warning('请输入 SQL'); return }
-      result.value = await runSqlAdhoc({ datasource_id: tab.datasourceId!, sql })
+      result.value = normalizeResult(await runSqlAdhoc({ datasource_id: tab.datasourceId!, sql }))
     } else {
       if (!tab.componentId) { Message.warning('请先保存后再运行'); return }
       if (tab.dirty) await doSave(tab)
-      result.value = await runComponentScript(tab.componentId!, tab.datasourceId)
+      result.value = normalizeResult(await runComponentScript(tab.componentId!, tab.datasourceId))
     }
   } catch (e: any) {
     result.value = { error: e?.response?.data?.detail || '执行失败' }
@@ -630,6 +659,11 @@ async function saveTab() {
   const tab = activeTab.value
   if (!tab) return
   if (!tab.componentId) {
+    // 弹窗已打开时不覆盖，避免丢失正在命名的另一个标签
+    if (saveModalVisible.value) {
+      Message.warning('请先完成当前保存操作')
+      return
+    }
     pendingSaveTab.value = tab
     saveName.value = tab.name.startsWith('Untitled') ? '' : tab.name
     saveModalVisible.value = true
@@ -654,7 +688,7 @@ async function doSave(tab: Tab) {
     // 构造 config_json
     const langKey = tab.language === 'sql' ? 'sql' : 'script'
     const config_json: any = { [langKey]: tab.code }
-    if (tab.datasourceId) config_json.datasource_id = tab.datasourceId
+    if (tab.datasourceId != null) config_json.datasource_id = tab.datasourceId
 
     const payload: any = {
       name: tab.name,
@@ -706,6 +740,13 @@ async function loadDatasources() {
   try {
     const res: any = await getDatasources({ page_size: 100 })
     datasources.value = res.items || []
+    // Clear stale datasourceId on any open tabs
+    const validIds = new Set(datasources.value.map((d: any) => d.id))
+    tabs.value.forEach(t => {
+      if (t.datasourceId != null && !validIds.has(t.datasourceId)) {
+        t.datasourceId = undefined
+      }
+    })
   } catch {}
 }
 
@@ -756,7 +797,7 @@ function buildFolderMenuItems(node: TreeNode): MenuItem[] {
   const t = node.folderType
   items.push({ key: collapsed ? 'expand' : 'collapse', label: collapsed ? '展开' : '折叠' })
   items.push({ divider: true })
-  if (node.depth < 2) {
+  if (node.depth < 3) {
     items.push({ key: 'new-subfolder', label: '新建子文件夹' })
   }
   items.push({ key: `new-${t}`, label: `新建${typeLabel(t)}` })
@@ -896,9 +937,29 @@ async function doPaste(targetNode: TreeNode) {
       clipboard.value = null
     }
   } else if (cb.kind === 'folder') {
-    if (cb.action === 'cut' && targetNode.kind === 'folder') {
+    if (targetNode.kind !== 'folder') return
+    if (cb.action === 'cut') {
+      // 防止循环引用：不能把文件夹移动到自身或其子孙
+      if (cb.id === targetNode.id || folderContains(cb.id, targetNode.id)) {
+        Message.error('不能将文件夹移动到自身或其子文件夹中')
+        return
+      }
       await doMoveFolder(cb.id, targetNode.id)
       clipboard.value = null
+    } else if (cb.action === 'copy') {
+      // 复制文件夹：创建同名文件夹（不递归复制内容）
+      const src = folders.value.find(f => f.id === cb.id)
+      if (!src) return
+      try {
+        await createComponentFolder({
+          name: src.name + '_copy',
+          type: src.type,
+          parent_id: targetNode.id,
+        })
+        Message.success('已复制文件夹')
+        await loadFolders()
+        clipboard.value = null
+      } catch {}
     }
   }
 }
@@ -911,7 +972,11 @@ const renameCompInputRef = ref<any>(null)
 function startRenameComponent(node: TreeNode) {
   renamingCompId.value = node.id
   renameCompValue.value = node.name
-  nextTick(() => renameCompInputRef.value?.focus?.())
+  nextTick(() => {
+    const el = renameCompInputRef.value
+    if (Array.isArray(el)) el[0]?.focus?.()
+    else el?.focus?.()
+  })
 }
 
 async function submitRenameComp(id: number) {
@@ -1023,13 +1088,13 @@ async function onDrop(e: DragEvent, targetNode: TreeNode) {
     // 组件拖到组件
     if (data.folderId === targetNode.data?.folder_id) {
       // 同文件夹 = 排序
-      await doReorderBetween(data.id, targetNode.id)
+      await doReorderBetween(data.id, targetNode.id, (dragState.dropPosition === 'inside' ? 'before' : dragState.dropPosition) ?? 'before')
     } else {
       // 跨文件夹 = 移到目标文件夹（根目录用 0）
       await doMoveComponent(data.id, targetNode.data?.folder_id ?? 0)
       // 等待数据刷新后再排序
       await loadComponents()
-      await doReorderBetween(data.id, targetNode.id)
+      await doReorderBetween(data.id, targetNode.id, (dragState.dropPosition === 'inside' ? 'before' : dragState.dropPosition) ?? 'before')
     }
   } else if (dragState.dragKind === 'folder' && targetNode.kind === 'folder') {
     // 文件夹拖到文件夹 = 嵌套移动
@@ -1106,22 +1171,25 @@ async function doMoveComponent(compId: number, folderId: number) {
   } catch {}
 }
 
-async function doReorderBetween(dragId: number, targetId: number) {
+async function doReorderBetween(dragId: number, targetId: number, dropPosition: 'before' | 'after' = 'before') {
   // 获取同文件夹的所有组件，重新计算 sort_order
   const dragComp = components.value.find(c => c.id === dragId)
   const targetComp = components.value.find(c => c.id === targetId)
   if (!dragComp || !targetComp) return
   const sameFolder = components.value
     .filter(c => c.folder_id === targetComp.folder_id && c.type === targetComp.type)
-    .sort((a, b) => a.sort_order - b.sort_order || b.id - a.id)
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || b.id - a.id)
 
   const dragIdx = sameFolder.findIndex(c => c.id === dragId)
   const targetIdx = sameFolder.findIndex(c => c.id === targetId)
   if (dragIdx === -1 || targetIdx === -1) return
 
-  // 移动数组元素
+  // 移动数组元素，区分 before/after
   const item = sameFolder.splice(dragIdx, 1)[0]
-  sameFolder.splice(targetIdx, 0, item)
+  const insertIdx = dropPosition === 'after'
+    ? (dragIdx < targetIdx ? targetIdx : targetIdx + 1)
+    : (dragIdx > targetIdx ? targetIdx : targetIdx)
+  sameFolder.splice(insertIdx, 0, item)
 
   // 重新分配 sort_order
   const orders = sameFolder.map((c, i) => ({ id: c.id, sort_order: i * 10 }))
@@ -1253,6 +1321,7 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 }
 
 .node-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comp-node :deep(.lang-icon) { flex-shrink: 0; order: -1; }
 .rename-input { flex: 1; height: 20px; font-size: 12px; }
 
 .node-actions {
@@ -1278,21 +1347,7 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 .node-action:hover { background: #FFFFFF; color: #2B5AED; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 .node-action.danger:hover { background: #FFECE8; color: #F53F3F; box-shadow: 0 1px 3px rgba(245,63,63,0.15); }
 
-.lang-badge {
-  font-size: 8px;
-  font-weight: 700;
-  padding: 1px 4px;
-  border-radius: 3px;
-  color: #fff;
-  flex-shrink: 0;
-  letter-spacing: 0.3px;
-  min-width: 18px;
-  text-align: center;
-}
-.badge-sql { background: linear-gradient(135deg, #2B5AED 0%, #3B7CFF 100%); }
-.badge-python { background: linear-gradient(135deg, #3491FA 0%, #5BAEFD 100%); }
-.badge-shell { background: linear-gradient(135deg, #722ED1 0%, #9558DB 100%); }
-.badge-datax { background: linear-gradient(135deg, #FF7D00 0%, #FFA133 100%); }
+
 
 /* 状态改为纯小圆点，hover 时通过 tooltip 显示文字 */
 .status-dot-only {
@@ -1300,8 +1355,7 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-  margin-left: auto;
-  margin-right: 10px;
+  margin-right: 4px;
   opacity: 0.7;
   transition: opacity 0.15s;
 }
@@ -1391,11 +1445,7 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
   flex-shrink: 0;
 }
 .tab-close:hover { background: #F53F3F; color: #fff; }
-.lang-badge-sm {
-  font-size: 9px; font-weight: 700;
-  padding: 1px 3px; border-radius: 2px;
-  color: #fff; flex-shrink: 0;
-}
+
 .add-tab-btn { flex-shrink: 0; margin: 0 4px; }
 
 /* Toolbar */
@@ -1414,7 +1464,7 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 
 /* Result panel */
 .result-panel {
-  height: 280px;
+  max-height: 360px;
   flex-shrink: 0;
   border-top: 1px solid #E5E6EB;
   display: flex;

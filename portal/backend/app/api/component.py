@@ -141,7 +141,7 @@ def _serialize(c: Component) -> dict:
         "ds_task_code": c.ds_task_code,
         "folder_id": c.folder_id if hasattr(c, 'folder_id') else None,
         "sort_order": c.sort_order if hasattr(c, 'sort_order') else 0,
-        "code": (c.config_json or {}).get('sql') or (c.config_json or {}).get('script') or '',
+        "code": (c.config_json or {}).get({'sql': 'sql', 'python': 'script', 'shell': 'script', 'datax': 'script'}.get(c.type, 'sql'), '') or '',
         "datasource_id": (c.config_json or {}).get('datasource_id'),
         "created_at": str(c.created_at) if c.created_at else None,
         "updated_at": str(c.updated_at) if c.updated_at else None,
@@ -153,6 +153,21 @@ def _get_or_404(db: Session, comp_id: int) -> Component:
     if not c:
         raise HTTPException(status_code=404, detail="组件不存在")
     return c
+def _check_workflow_refs(db: Session, comp_id: int):
+    """检查组件是否被工作流引用，若有则抛出 400"""
+    from app.models.workflow import Workflow
+    refs = db.query(Workflow.name).filter(
+        Workflow.steps_json.contains(f'"component_id": {comp_id}'),
+        Workflow.status.notin_(["offline", "archived"]),
+    ).all()
+    if refs:
+        names = "、".join(r.name for r in refs[:5])
+        raise HTTPException(
+            status_code=400,
+            detail=f"组件被以下工作流引用，请先下线相关工作流：{names}",
+        )
+
+
 
 
 def _run_sql(db: Session, datasource_id: int, sql: str):
@@ -266,7 +281,7 @@ class FolderRename(BaseModel):
 def _folder_depth(db: Session, parent_id: Optional[int]) -> int:
     depth = 0
     pid = parent_id
-    while pid is not None and depth < 5:
+    while pid is not None and depth < 3:
         f = db.query(ComponentFolder).filter(ComponentFolder.id == pid).first()
         if not f:
             break
@@ -285,7 +300,7 @@ def list_folders(
     if folder_type:
         q = q.filter(ComponentFolder.type == folder_type)
     items = q.order_by(ComponentFolder.sort_order.asc(), ComponentFolder.id.asc()).all()
-    return [{"id": f.id, "name": f.name, "type": f.type, "parent_id": f.parent_id} for f in items]
+    return [{"id": f.id, "name": f.name, "type": f.type, "parent_id": f.parent_id, "sort_order": f.sort_order} for f in items]
 
 
 @router.post("/folders")
@@ -372,7 +387,7 @@ def update_component(
     if c.status not in EDITABLE_STATUSES:
         raise HTTPException(
             status_code=400,
-            detail=f"组件状态 {c.status},只有 draft/tested 状态允许编辑;请先下线",
+            detail=f"组件当前状态「{c.status}」不允许编辑",
         )
     updates = req.model_dump(exclude_unset=True)
     # Handle convenience fields
@@ -408,6 +423,7 @@ def delete_component(
             status_code=400,
             detail=f"组件状态 {c.status},只有 draft/offline 状态允许删除;请先下线",
         )
+    _check_workflow_refs(db, comp_id)
     db.delete(c)
     db.commit()
     return {"message": "删除成功"}
@@ -423,14 +439,15 @@ def run_component(
 ):
     """运行组件：SQL 直连执行返回结果，Python/Shell 用 subprocess 执行返回日志"""
     c = _get_or_404(db, comp_id)
-    code = (c.config_json or {}).get("code", "").strip()
+    cfg = c.config_json or {}
+    code = (cfg.get("sql") or cfg.get("script") or cfg.get("code") or "").strip()
     if not code:
         raise HTTPException(400, "组件代码为空")
 
     start = time.time()
 
     if c.type == "sql":
-        ds_id = datasource_id or (c.config_json or {}).get("datasource_id")
+        ds_id = datasource_id or cfg.get("datasource_id")
         if not ds_id:
             raise HTTPException(400, "未指定数据源，请在 URL 加 ?datasource_id=X 或在组件中配置")
         return _run_sql(db, ds_id, code)
@@ -527,6 +544,7 @@ def offline_component(
     c = _get_or_404(db, comp_id)
     if c.status != STATUS_ONLINE:
         raise HTTPException(status_code=400, detail=f"只有 online 状态可下线,当前 {c.status}")
+    _check_workflow_refs(db, comp_id)
     c.status = STATUS_OFFLINE
     db.commit()
     db.refresh(c)
