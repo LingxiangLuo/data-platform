@@ -13,20 +13,27 @@
       <div class="comp-tree">
         <template v-for="grp in typeGroups" :key="grp.type">
           <!-- 类型组标题 -->
+<<<<<<< HEAD
           <div class="grp-header" @click="toggleGrp(grp.type)">
             <icon-down v-if="!grpCollapsed[grp.type]" class="caret" />
             <icon-right v-else class="caret" />
+=======
+          <div
+            class="grp-header"
+            :class="{ 'drop-target': dragState.dropTargetId === grp.type && dragState.dropKind === 'group' }"
+            @click="toggleGrp(grp.type)"
+            @dragover.prevent="onDragOverGroup($event, grp.type)"
+            @drop.prevent="onDropGroup($event, grp.type)"
+          >
+            <span class="caret">{{ grpCollapsed[grp.type] ? "▸" : "▾" }}</span>
+>>>>>>> 86c19fa (feat: 组件树拖拽排序 + 多级右键菜单 + 统一类型徽章)
             <span class="grp-label">{{ grp.label }}</span>
             <span class="grp-count">{{ compCountByType(grp.type) }}</span>
             <a-tooltip content="新建文件夹">
-              <span class="grp-action" @click.stop="startNewFolder(grp.type, null)">
-                <icon-folder-add />
-              </span>
+              <span class="grp-action" @click.stop="startNewFolder(grp.type, null)">⊞</span>
             </a-tooltip>
             <a-tooltip content="新建组件">
-              <span class="grp-action" @click.stop="newBlankTab(grp.type as Language)">
-                <icon-plus />
-              </span>
+              <span class="grp-action" @click.stop="newBlankTab(grp.type as Language)">＋</span>
             </a-tooltip>
           </div>
 
@@ -40,10 +47,10 @@
                 :style="{ paddingLeft: `${14 + node.depth * 16}px` }"
               >
                 <span class="node-toggle" @click="toggleFolder(node.id)">
-                  <icon-down v-if="!folderCollapsed[node.id]" class="caret" />
-                  <icon-right v-else class="caret" />
+                  <span v-if="!folderCollapsed[node.id]" class="caret">▾</span>
+                  <span v-else class="caret">▸</span>
                 </span>
-                <icon-folder class="folder-icon" />
+                <span class="folder-icon">📁</span>
                 <span v-if="renamingFolderId !== node.id" class="node-name" @dblclick="startRename(node)">
                   {{ node.name }}
                 </span>
@@ -58,19 +65,20 @@
                   ref="renameInputRef"
                 />
                 <span class="node-actions">
-                  <a-tooltip v-if="node.depth < 2" content="新建子文件夹">
-                    <span class="node-action" @click.stop="startNewFolder(node.folderType, node.id)"><icon-folder-add /></span>
+                  <a-tooltip v-if="node.depth < 3" content="新建子文件夹">
+                    <span class="node-action" @click.stop="startNewFolder(node.folderType, node.id)">⊞</span>
                   </a-tooltip>
                   <a-tooltip content="新建组件">
-                    <span class="node-action" @click.stop="newBlankTab(node.folderType as Language, node.id)"><icon-plus /></span>
+                    <span class="node-action" @click.stop="newBlankTab(node.folderType as Language, node.id)">＋</span>
                   </a-tooltip>
                   <a-tooltip content="删除文件夹">
-                    <span class="node-action danger" @click.stop="deleteFolder(node.id)"><icon-delete /></span>
+                    <span class="node-action danger" @click.stop="deleteFolder(node.id)">×</span>
                   </a-tooltip>
                 </span>
               </div>
 
               <!-- 组件行 -->
+<<<<<<< HEAD
               <a-dropdown v-else trigger="contextMenu" position="br">
                 <div
                   :class="['tree-node comp-node', { 'comp-open': isTabActive(node.id) }]"
@@ -109,6 +117,49 @@
                   </a-doption>
                 </template>
               </a-dropdown>
+=======
+              <div
+                v-else
+                :class="[
+                  'tree-node comp-node',
+                  {
+                    'comp-open': isTabActive(node.id),
+                    'dragging': dragState.draggingId === node.id,
+                    'drop-target': dragState.dropTargetId === node.id && dragState.dropKind === 'component',
+                    'drop-before': dragState.dropTargetId === node.id && dragState.dropPosition === 'before',
+                    'drop-after': dragState.dropTargetId === node.id && dragState.dropPosition === 'after'
+                  }
+                ]"
+                :style="{ paddingLeft: `${14 + node.depth * 16}px` }"
+                :draggable="renamingCompId !== node.id"
+                @click="openComp(node.data)"
+                @contextmenu.prevent="showCompContextMenu($event, node)"
+                @dragstart="onDragStart($event, node)"
+                @dragend="onDragEnd()"
+                @dragover.prevent="onDragOver($event, node)"
+                @drop.prevent="onDrop($event, node)"
+              >
+                <LangIcon :type="node.data.type" :size="18" />
+                <span v-if="renamingCompId !== node.id" class="node-name">{{ node.name }}</span>
+                <a-input
+                  v-else
+                  v-model="renameCompValue"
+                  size="mini"
+                  class="rename-input"
+                  @blur="submitRenameComp(node.id)"
+                  @keyup.enter="submitRenameComp(node.id)"
+                  @keyup.escape="renamingCompId = null"
+                  @dragstart.stop.prevent
+                  ref="renameCompInputRef"
+                />
+                <a-tooltip :content="statusLabel(node.data.status)" position="right">
+                  <span
+                    class="status-dot-only"
+                    :style="{ background: statusColor(node.data.status) }"
+                  ></span>
+                </a-tooltip>
+              </div>
+>>>>>>> 86c19fa (feat: 组件树拖拽排序 + 多级右键菜单 + 统一类型徽章)
             </template>
           </template>
         </template>
@@ -135,9 +186,7 @@
               :class="['tab-item', { active: activeKey === tab.key }]"
               @click="switchTab(tab.key)"
             >
-              <span :class="['lang-badge-sm', `badge-${tab.language}`]">
-                {{ tab.language.slice(0, 2).toUpperCase() }}
-              </span>
+              <LangIcon :type="tab.language" :size="16" />
               <span class="tab-name">{{ tab.dirty ? '● ' : '' }}{{ tab.name }}</span>
               <span class="tab-close" @click.stop="closeTab(tab.key)">×</span>
             </div>
@@ -199,7 +248,9 @@
             <span class="result-info">
               <template v-if="running">运行中...</template>
               <template v-else-if="result">
-                <span v-if="result.type === 'table'" class="ok-text">✓ {{ result.row_count }} 行 · {{ result.duration_ms }}ms</span>
+                <span v-if="result.type === 'table'" class="ok-text">
+                  ✓ 共查询到 {{ result.row_count }} 行{{ result.row_count >= 2000 ? '（已达上限，仅展示前 2000 行）' : '' }} · {{ result.duration_ms }}ms
+                </span>
                 <span v-else-if="result.type === 'rowcount'" class="ok-text">✓ 影响 {{ result.affected }} 行 · {{ result.duration_ms }}ms</span>
                 <span v-else-if="result.type === 'log'" :class="result.ok ? 'ok-text' : 'err-text'">
                   {{ result.ok ? '✓' : '✗' }} exit {{ result.exit_code }} · {{ result.duration_ms }}ms
@@ -216,9 +267,9 @@
                 v-if="result.type === 'table'"
                 :columns="result.columns.map((c: string) => ({ title: c, dataIndex: c, ellipsis: true, width: 120 }))"
                 :data="result.rows"
-                :pagination="false"
+                :pagination="{ pageSize: 50, showTotal: true, size: 'mini' }"
                 size="mini"
-                :scroll="{ x: 'max-content', y: 200 }"
+                :scroll="{ x: 'max-content' }"
                 class="result-table"
               />
               <div v-else-if="result.type === 'rowcount'" class="result-text ok-text">
@@ -250,6 +301,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
+import LangIcon from '../components/LangIcon.vue'
 import { Message } from '@arco-design/web-vue'
 import {
   IconPlus, IconSearch, IconDown, IconRight, IconPlayArrow, IconSave, IconUpload,
@@ -281,6 +333,7 @@ const typeGroups = [
   { type: 'python', label: 'Python 脚本' },
   { type: 'shell', label: 'Shell 脚本' },
 ]
+
 
 const tabs = ref<Tab[]>([])
 const activeKey = ref('')
@@ -350,7 +403,9 @@ function flatTree(type: string): TreeNode[] {
 
   function traverse(parentId: number | null, depth: number) {
     // Child folders
-    const childFolders = typeFolders.filter(f => (f.parent_id ?? null) === parentId)
+    const childFolders = typeFolders
+      .filter(f => (f.parent_id ?? null) === parentId)
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id)
     for (const f of childFolders) {
       // 搜索时只显示有匹配项的文件夹
       if (searching && !folderHasMatch(f.id)) continue
@@ -360,8 +415,20 @@ function flatTree(type: string): TreeNode[] {
         traverse(f.id, depth + 1)
       }
     }
+<<<<<<< HEAD
     // Child components
     const childComps = typeComps.filter(c => (c.folder_id ?? null) === parentId)
+=======
+    // Child components (orphaned components with invalid folder_id treated as root)
+    const childComps = typeComps.filter(c => {
+      const fid = c.folder_id ?? null
+      if (parentId === null) {
+        return fid === null || !validFolderIds.has(fid)
+      }
+      return fid === parentId
+    })
+    childComps.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || b.id - a.id)
+>>>>>>> 86c19fa (feat: 组件树拖拽排序 + 多级右键菜单 + 统一类型徽章)
     for (const c of childComps) {
       result.push({ nodeKey: `c-${c.id}`, kind: 'component', id: c.id, name: c.name, depth, folderType: type, data: c })
     }
@@ -395,7 +462,12 @@ function openComp(c: any) {
     language: c.type as Language,
     componentId: c.id,
     folderId: c.folder_id ?? null,
-    datasourceId: cfg.datasource_id || c.datasource_id || undefined,
+    datasourceId: (() => {
+      const rawId = cfg.datasource_id || c.datasource_id || undefined
+      if (rawId == null) return undefined
+      const validIds = new Set(datasources.value.map((d: any) => d.id))
+      return validIds.has(rawId) ? rawId : undefined
+    })(),
     dirty: false,
   })
   switchTab(key)
@@ -447,7 +519,11 @@ async function confirmNewFolder() {
 function startRename(node: TreeNode) {
   renamingFolderId.value = node.id
   renameValue.value = node.name
-  nextTick(() => renameInputRef.value?.focus?.())
+  nextTick(() => {
+    const el = renameInputRef.value
+    if (Array.isArray(el)) el[0]?.focus?.()
+    else el?.focus?.()
+  })
 }
 
 async function submitRename(id: number) {
@@ -503,14 +579,25 @@ function statusTagStyle(s: string) {
     color: color,
   }
 }
+const STATUS_TRANSITIONS: Record<string, string[]> = {
+  draft:      ['developing', 'testing', 'deprecated', 'archived'],
+  developing: ['testing', 'paused', 'deprecated'],
+  testing:    ['reviewing', 'tested', 'paused', 'deprecated'],
+  reviewing:  ['tested', 'paused', 'developing'],
+  tested:     ['paused', 'testing'],
+  online:     ['offline', 'paused'],
+  offline:    ['online', 'archived', 'paused', 'developing'],
+  paused:     [],
+  deprecated: ['archived'],
+  archived:   [],
+}
 function manualStatusOptions(current: string) {
-  // 已暂停时，菜单仅显示恢复（在模板单独处理）
   if (current === 'paused') return []
-  // 已归档不可改
   if (current === 'archived') return []
-  return Object.entries(STATUS_DEFS)
-    .filter(([k, v]) => v.manual && k !== current)
-    .map(([k, v]) => ({ value: k, label: v.label, color: v.color }))
+  const allowed = STATUS_TRANSITIONS[current] ?? []
+  return allowed
+    .filter(k => STATUS_DEFS[k]?.manual)
+    .map(k => ({ value: k, label: STATUS_DEFS[k].label, color: STATUS_DEFS[k].color }))
 }
 
 async function setCompStatus(c: any, status: string) {
@@ -542,6 +629,17 @@ async function confirmDeleteComp(c: any) {
 async function runCode() {
   const tab = activeTab.value
   if (!tab) return
+// Convert list-of-lists rows to list-of-objects for a-table
+function normalizeResult(res: any): any {
+  if (res?.type === 'table' && Array.isArray(res.rows) && Array.isArray(res.columns)) {
+    const cols: string[] = res.columns
+    res.rows = res.rows.map((row: any[]) =>
+      Array.isArray(row) ? Object.fromEntries(cols.map((c, i) => [c, row[i]])) : row
+    )
+  }
+  return res
+}
+
   result.value = null
   if (tab.language === 'sql' && !tab.datasourceId) { Message.warning('请先选择数据源'); return }
   running.value = true
@@ -550,11 +648,11 @@ async function runCode() {
       const sel: string = editorRef.value?.getSelectedText?.() ?? ''
       const sql = (sel || tab.code).trim()
       if (!sql) { Message.warning('请输入 SQL'); return }
-      result.value = await runSqlAdhoc({ datasource_id: tab.datasourceId!, sql })
+      result.value = normalizeResult(await runSqlAdhoc({ datasource_id: tab.datasourceId!, sql }))
     } else {
       if (!tab.componentId) { Message.warning('请先保存后再运行'); return }
       if (tab.dirty) await doSave(tab)
-      result.value = await runComponentScript(tab.componentId!, tab.datasourceId)
+      result.value = normalizeResult(await runComponentScript(tab.componentId!, tab.datasourceId))
     }
   } catch (e: any) {
     result.value = { error: e?.response?.data?.detail || '执行失败' }
@@ -568,6 +666,11 @@ async function saveTab() {
   const tab = activeTab.value
   if (!tab) return
   if (!tab.componentId) {
+    // 弹窗已打开时不覆盖，避免丢失正在命名的另一个标签
+    if (saveModalVisible.value) {
+      Message.warning('请先完成当前保存操作')
+      return
+    }
     pendingSaveTab.value = tab
     saveName.value = tab.name.startsWith('Untitled') ? '' : tab.name
     saveModalVisible.value = true
@@ -592,7 +695,7 @@ async function doSave(tab: Tab) {
     // 构造 config_json
     const langKey = tab.language === 'sql' ? 'sql' : 'script'
     const config_json: any = { [langKey]: tab.code }
-    if (tab.datasourceId) config_json.datasource_id = tab.datasourceId
+    if (tab.datasourceId != null) config_json.datasource_id = tab.datasourceId
 
     const payload: any = {
       name: tab.name,
@@ -644,9 +747,476 @@ async function loadDatasources() {
   try {
     const res: any = await getDatasources({ page_size: 100 })
     datasources.value = res.items || []
+    // Clear stale datasourceId on any open tabs
+    const validIds = new Set(datasources.value.map((d: any) => d.id))
+    tabs.value.forEach(t => {
+      if (t.datasourceId != null && !validIds.has(t.datasourceId)) {
+        t.datasourceId = undefined
+      }
+    })
   } catch {}
 }
 
+<<<<<<< HEAD
+=======
+// ---- 右键菜单 ----
+function typeLabel(type: string): string {
+  const map: Record<string, string> = { sql: 'SQL 查询', python: 'Python 脚本', shell: 'Shell 脚本' }
+  return map[type] || type
+}
+
+function buildCompMenuItems(node: TreeNode): MenuItem[] {
+  const c = node.data
+  const t = c.type as string
+  const items: MenuItem[] = []
+  items.push({ key: 'open', label: '打开' })
+  items.push({ key: 'run', label: '运行' })
+  items.push({ divider: true })
+  items.push({ key: `new-${t}`, label: `新建${typeLabel(t)}` })
+  items.push({ key: 'copy', label: '复制' })
+  items.push({ key: 'cut', label: '剪切' })
+  if (clipboard.value && clipboard.value.kind === 'component') {
+    items.push({ key: 'paste', label: '粘贴' })
+  }
+  items.push({ divider: true })
+  items.push({ key: 'rename', label: '重命名' })
+  items.push({
+    key: 'move',
+    label: '移动到其他文件夹',
+    children: buildMoveToFolderMenu(t, 'move-to'),
+  })
+  items.push({ divider: true })
+  if (c.status === 'paused') {
+    items.push({ key: 'resume', label: '从暂停恢复' })
+  } else if (c.status !== 'archived') {
+    items.push({
+      key: 'status',
+      label: '设置状态',
+      children: buildStatusSubmenu(c.status),
+    })
+  }
+  items.push({ divider: true })
+  items.push({ key: 'delete', label: '删除', danger: true })
+  return items
+}
+
+function buildFolderMenuItems(node: TreeNode): MenuItem[] {
+  const items: MenuItem[] = []
+  const collapsed = folderCollapsed[node.id]
+  const t = node.folderType
+  items.push({ key: collapsed ? 'expand' : 'collapse', label: collapsed ? '展开' : '折叠' })
+  items.push({ divider: true })
+  if (node.depth < 3) {
+    items.push({ key: 'new-subfolder', label: '新建子文件夹' })
+  }
+  items.push({ key: `new-${t}`, label: `新建${typeLabel(t)}` })
+  items.push({ divider: true })
+  items.push({ key: 'rename', label: '重命名' })
+  items.push({ key: 'cut', label: '剪切' })
+  if (clipboard.value && clipboard.value.kind === 'folder') {
+    items.push({ key: 'paste', label: '粘贴' })
+  }
+  items.push({ divider: true })
+  items.push({ key: 'delete', label: '删除', danger: true })
+  return items
+}
+
+function buildStatusSubmenu(current: string): MenuItem[] {
+  const opts = manualStatusOptions(current)
+  return opts.map(o => ({
+    key: `status-${o.value}`,
+    label: o.label,
+    icon: 'dot',
+  }))
+}
+
+function buildMoveToFolderMenu(type: string, prefix: string): MenuItem[] {
+  const typeFolders = folders.value.filter(f => f.type === type)
+  const roots = typeFolders.filter(f => f.parent_id == null)
+  function buildSub(foldersList: any[]): MenuItem[] {
+    return foldersList.map(f => {
+      const children = typeFolders.filter(child => child.parent_id === f.id)
+      const item: MenuItem = { key: `${prefix}-${f.id}`, label: f.name }
+      if (children.length > 0) {
+        item.children = buildSub(children)
+      }
+      return item
+    })
+  }
+  const menu = buildSub(roots)
+  // 添加"无文件夹"选项
+  menu.unshift({ key: `${prefix}-0`, label: '（无文件夹）' })
+  return menu
+}
+
+async function onMenuSelect(key: string) {
+  // 从 contextMenu 的触发源中恢复当前节点 —— 通过最后一个右键事件记录
+  const targetNode = lastContextNode.value
+  if (!targetNode) return
+
+  if (key === 'open') {
+    if (targetNode.kind === 'component') openComp(targetNode.data)
+  } else if (key === 'run') {
+    if (targetNode.kind === 'component') {
+      openComp(targetNode.data)
+      await nextTick()
+      runCode()
+    }
+  } else if (key === 'expand') {
+    folderCollapsed[targetNode.id] = false
+  } else if (key === 'collapse') {
+    folderCollapsed[targetNode.id] = true
+  } else if (key === 'copy') {
+    if (targetNode.kind === 'component') {
+      clipboard.value = { kind: 'component', action: 'copy', id: targetNode.id, type: targetNode.data.type }
+    }
+  } else if (key === 'cut') {
+    if (targetNode.kind === 'component') {
+      clipboard.value = { kind: 'component', action: 'cut', id: targetNode.id, type: targetNode.data.type }
+    } else if (targetNode.kind === 'folder') {
+      clipboard.value = { kind: 'folder', action: 'cut', id: targetNode.id, folderType: targetNode.folderType }
+    }
+  } else if (key === 'paste') {
+    await doPaste(targetNode)
+  } else if (key === 'rename') {
+    if (targetNode.kind === 'folder') startRename(targetNode)
+    else if (targetNode.kind === 'component') startRenameComponent(targetNode)
+  } else if (key === 'delete') {
+    if (targetNode.kind === 'component') await confirmDeleteComp(targetNode.data)
+    else if (targetNode.kind === 'folder') await deleteFolder(targetNode.id)
+  } else if (key === 'new-subfolder') {
+    if (targetNode.kind === 'folder') startNewFolder(targetNode.folderType, targetNode.id)
+  } else if (key === 'resume') {
+    if (targetNode.kind === 'component') await setCompStatus(targetNode.data, '__resume__')
+  } else if (key.startsWith('status-')) {
+    const status = key.replace('status-', '')
+    if (targetNode.kind === 'component') await setCompStatus(targetNode.data, status)
+  } else if (key.startsWith('move-to-')) {
+    const folderId = parseInt(key.replace('move-to-', ''), 10)
+    if (targetNode.kind === 'component') await doMoveComponent(targetNode.data.id, folderId)
+  } else if (key.startsWith('new-')) {
+    const lang = key.replace('new-', '') as Language
+    const folderId = targetNode.kind === 'folder' ? targetNode.id : (targetNode.data?.folder_id ?? null)
+    newBlankTab(lang, folderId)
+  }
+}
+
+const lastContextNode = ref<TreeNode | null>(null)
+
+function showCompContextMenu(e: MouseEvent, node: TreeNode) {
+  lastContextNode.value = node
+  contextMenu.x = e.clientX
+  contextMenu.y = e.clientY
+  contextMenu.items = buildCompMenuItems(node)
+  contextMenu.visible = true
+}
+
+function showFolderContextMenu(e: MouseEvent, node: TreeNode) {
+  lastContextNode.value = node
+  contextMenu.x = e.clientX
+  contextMenu.y = e.clientY
+  contextMenu.items = buildFolderMenuItems(node)
+  contextMenu.visible = true
+}
+
+// ---- 剪贴板操作 ----
+async function doPaste(targetNode: TreeNode) {
+  const cb = clipboard.value
+  if (!cb) return
+  if (cb.kind === 'component') {
+    const targetFolderId = targetNode.kind === 'folder' ? targetNode.id : (targetNode.data?.folder_id ?? null)
+    if (cb.action === 'copy') {
+      // 复制：创建新组件
+      const src = components.value.find(c => c.id === cb.id)
+      if (!src) return
+      try {
+        const res: any = await createComponent({
+          name: src.name + '_copy',
+          type: src.type,
+          description: src.description,
+          config_json: src.config_json || {},
+          folder_id: targetFolderId,
+        })
+        Message.success('已复制')
+        await loadComponents()
+        openComp(res)
+      } catch {}
+    } else if (cb.action === 'cut') {
+      await doMoveComponent(cb.id, targetFolderId ?? 0)
+      clipboard.value = null
+    }
+  } else if (cb.kind === 'folder') {
+    if (targetNode.kind !== 'folder') return
+    if (cb.action === 'cut') {
+      // 防止循环引用：不能把文件夹移动到自身或其子孙
+      if (cb.id === targetNode.id || folderContains(cb.id, targetNode.id)) {
+        Message.error('不能将文件夹移动到自身或其子文件夹中')
+        return
+      }
+      await doMoveFolder(cb.id, targetNode.id)
+      clipboard.value = null
+    } else if (cb.action === 'copy') {
+      // 复制文件夹：创建同名文件夹（不递归复制内容）
+      const src = folders.value.find(f => f.id === cb.id)
+      if (!src) return
+      try {
+        await createComponentFolder({
+          name: src.name + '_copy',
+          type: src.type,
+          parent_id: targetNode.id,
+        })
+        Message.success('已复制文件夹')
+        await loadFolders()
+        clipboard.value = null
+      } catch {}
+    }
+  }
+}
+
+// ---- 组件重命名 ----
+const renamingCompId = ref<number | null>(null)
+const renameCompValue = ref('')
+const renameCompInputRef = ref<any>(null)
+
+function startRenameComponent(node: TreeNode) {
+  renamingCompId.value = node.id
+  renameCompValue.value = node.name
+  nextTick(() => {
+    const el = renameCompInputRef.value
+    if (Array.isArray(el)) el[0]?.focus?.()
+    else el?.focus?.()
+  })
+}
+
+async function submitRenameComp(id: number) {
+  if (!renameCompValue.value.trim()) { renamingCompId.value = null; return }
+  try {
+    await updateComponent(id, { name: renameCompValue.value.trim() })
+    await loadComponents()
+    // 更新已打开 tab 的名称
+    const tab = tabs.value.find(t => t.componentId === id)
+    if (tab) tab.name = renameCompValue.value.trim()
+  } catch {} finally {
+    renamingCompId.value = null
+  }
+}
+
+// ---- 拖拽 ----
+function onDragStart(e: DragEvent, node: TreeNode) {
+  dragState.draggingId = node.id
+  dragState.dragKind = node.kind
+  dragState.dragFolderType = node.folderType
+  dragState.dragFolderId = node.data?.folder_id ?? null
+  e.dataTransfer!.effectAllowed = 'move'
+  e.dataTransfer!.setData('application/json', JSON.stringify({
+    id: node.id,
+    kind: node.kind,
+    folderType: node.folderType,
+    type: node.data?.type,
+    folderId: node.data?.folder_id,
+  }))
+}
+
+/** 检查拖拽文件夹是否包含目标文件夹（防止循环引用） */
+function folderContains(parentId: number, childId: number): boolean {
+  const children = folders.value.filter(f => f.parent_id === parentId)
+  for (const child of children) {
+    if (child.id === childId) return true
+    if (folderContains(child.id, childId)) return true
+  }
+  return false
+}
+
+function onDragOver(e: DragEvent, targetNode: TreeNode) {
+  e.preventDefault()
+  // 同节点不处理
+  if (dragState.draggingId === targetNode.id) {
+    dragState.dropTargetId = null
+    dragState.dropKind = null
+    dragState.dropPosition = null
+    e.dataTransfer!.dropEffect = 'none'
+    return
+  }
+
+  // 跨类型阻止
+  if (dragState.dragFolderType !== targetNode.folderType) {
+    dragState.dropTargetId = null
+    dragState.dropKind = null
+    dragState.dropPosition = null
+    e.dataTransfer!.dropEffect = 'none'
+    return
+  }
+
+  // 文件夹不能拖到组件上
+  if (dragState.dragKind === 'folder' && targetNode.kind === 'component') {
+    dragState.dropTargetId = null
+    dragState.dropKind = null
+    dragState.dropPosition = null
+    e.dataTransfer!.dropEffect = 'none'
+    return
+  }
+
+  // 文件夹拖到文件夹：阻止循环引用（不能拖到自身或其子文件夹）
+  if (dragState.dragKind === 'folder' && targetNode.kind === 'folder') {
+    if (dragState.draggingId! === targetNode.id || folderContains(dragState.draggingId!, targetNode.id)) {
+      dragState.dropTargetId = null
+      dragState.dropKind = null
+      dragState.dropPosition = null
+      e.dataTransfer!.dropEffect = 'none'
+      return
+    }
+  }
+
+  e.dataTransfer!.dropEffect = 'move'
+  dragState.dropTargetId = targetNode.id
+  dragState.dropKind = targetNode.kind
+
+  // 计算插入位置：文件夹 = inside，组件 = 根据鼠标位置判断 before/after
+  if (targetNode.kind === 'folder') {
+    dragState.dropPosition = 'inside'
+  } else {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const midY = rect.top + rect.height / 2
+    dragState.dropPosition = e.clientY < midY ? 'before' : 'after'
+  }
+}
+
+async function onDrop(e: DragEvent, targetNode: TreeNode) {
+  e.preventDefault()
+  const dataStr = e.dataTransfer!.getData('application/json')
+  if (!dataStr) return
+  const data = JSON.parse(dataStr)
+
+  // 跨类型忽略
+  if (dragState.dragFolderType !== targetNode.folderType) return
+
+  if (data.kind === 'component' && targetNode.kind === 'folder') {
+    // 组件拖到文件夹 = 移动
+    await doMoveComponent(data.id, targetNode.id)
+  } else if (data.kind === 'component' && targetNode.kind === 'component') {
+    // 组件拖到组件
+    if (data.folderId === targetNode.data?.folder_id) {
+      // 同文件夹 = 排序
+      await doReorderBetween(data.id, targetNode.id, (dragState.dropPosition === 'inside' ? 'before' : dragState.dropPosition) ?? 'before')
+    } else {
+      // 跨文件夹 = 移到目标文件夹（根目录用 0）
+      await doMoveComponent(data.id, targetNode.data?.folder_id ?? 0)
+      // 等待数据刷新后再排序
+      await loadComponents()
+      await doReorderBetween(data.id, targetNode.id, (dragState.dropPosition === 'inside' ? 'before' : dragState.dropPosition) ?? 'before')
+    }
+  } else if (dragState.dragKind === 'folder' && targetNode.kind === 'folder') {
+    // 文件夹拖到文件夹 = 嵌套移动
+    if (dragState.draggingId! === targetNode.id || folderContains(dragState.draggingId!, targetNode.id)) return
+    await doMoveFolder(data.id, targetNode.id)
+  }
+
+  dragState.draggingId = null
+  dragState.dragKind = null
+  dragState.dragFolderType = null
+  dragState.dragFolderId = null
+  dragState.dropTargetId = null
+  dragState.dropKind = null
+  dragState.dropPosition = null
+}
+
+/** 拖拽经过类型组标题：只允许同类型组件移回根目录 */
+function onDragOverGroup(e: DragEvent, groupType: string) {
+  e.preventDefault()
+  if (dragState.dragFolderType !== groupType) {
+    e.dataTransfer!.dropEffect = 'none'
+    dragState.dropTargetId = null
+    dragState.dropKind = null
+    dragState.dropPosition = null
+    return
+  }
+  if (dragState.dragKind === 'folder') {
+    e.dataTransfer!.dropEffect = 'none'
+    dragState.dropTargetId = null
+    dragState.dropKind = null
+    dragState.dropPosition = null
+    return
+  }
+  e.dataTransfer!.dropEffect = 'move'
+  dragState.dropTargetId = groupType
+  dragState.dropKind = 'group'
+  dragState.dropPosition = null
+}
+
+/** 组件拖到类型组标题 = 移到根目录 */
+async function onDropGroup(e: DragEvent, groupType: string) {
+  e.preventDefault()
+  const dataStr = e.dataTransfer!.getData('application/json')
+  if (!dataStr) return
+  const data = JSON.parse(dataStr)
+  if (dragState.dragFolderType !== groupType) return
+  if (data.kind === 'component') {
+    await doMoveComponent(data.id, 0)
+  }
+  dragState.draggingId = null
+  dragState.dragKind = null
+  dragState.dragFolderType = null
+  dragState.dragFolderId = null
+  dragState.dropTargetId = null
+  dragState.dropKind = null
+  dragState.dropPosition = null
+}
+
+function onDragEnd() {
+  dragState.draggingId = null
+  dragState.dragKind = null
+  dragState.dragFolderType = null
+  dragState.dragFolderId = null
+  dragState.dropTargetId = null
+  dragState.dropKind = null
+  dragState.dropPosition = null
+}
+
+async function doMoveComponent(compId: number, folderId: number) {
+  try {
+    await moveComponent(compId, folderId)
+    Message.success('移动成功')
+    await loadComponents()
+  } catch {}
+}
+
+async function doReorderBetween(dragId: number, targetId: number, dropPosition: 'before' | 'after' = 'before') {
+  // 获取同文件夹的所有组件，重新计算 sort_order
+  const dragComp = components.value.find(c => c.id === dragId)
+  const targetComp = components.value.find(c => c.id === targetId)
+  if (!dragComp || !targetComp) return
+  const sameFolder = components.value
+    .filter(c => c.folder_id === targetComp.folder_id && c.type === targetComp.type)
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || b.id - a.id)
+
+  const dragIdx = sameFolder.findIndex(c => c.id === dragId)
+  const targetIdx = sameFolder.findIndex(c => c.id === targetId)
+  if (dragIdx === -1 || targetIdx === -1) return
+
+  // 移动数组元素，区分 before/after
+  const item = sameFolder.splice(dragIdx, 1)[0]
+  const insertIdx = dropPosition === 'after'
+    ? (dragIdx < targetIdx ? targetIdx : targetIdx + 1)
+    : (dragIdx > targetIdx ? targetIdx : targetIdx)
+  sameFolder.splice(insertIdx, 0, item)
+
+  // 重新分配 sort_order
+  const orders = sameFolder.map((c, i) => ({ id: c.id, sort_order: i * 10 }))
+  try {
+    await reorderComponents(orders)
+    await loadComponents()
+  } catch {}
+}
+
+async function doMoveFolder(folderId: number, parentId: number) {
+  try {
+    await moveComponentFolder(folderId, parentId)
+    Message.success('移动成功')
+    await loadFolders()
+  } catch {}
+}
+
+>>>>>>> 86c19fa (feat: 组件树拖拽排序 + 多级右键菜单 + 统一类型徽章)
 onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]))
 </script>
 
@@ -761,6 +1331,7 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 }
 
 .node-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comp-node :deep(.lang-icon) { flex-shrink: 0; order: -1; }
 .rename-input { flex: 1; height: 20px; font-size: 12px; }
 
 .node-actions {
@@ -786,21 +1357,7 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 .node-action:hover { background: #FFFFFF; color: #2B5AED; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 .node-action.danger:hover { background: #FFECE8; color: #F53F3F; box-shadow: 0 1px 3px rgba(245,63,63,0.15); }
 
-.lang-badge {
-  font-size: 8px;
-  font-weight: 700;
-  padding: 1px 4px;
-  border-radius: 3px;
-  color: #fff;
-  flex-shrink: 0;
-  letter-spacing: 0.3px;
-  min-width: 18px;
-  text-align: center;
-}
-.badge-sql { background: linear-gradient(135deg, #2B5AED 0%, #3B7CFF 100%); }
-.badge-python { background: linear-gradient(135deg, #3491FA 0%, #5BAEFD 100%); }
-.badge-shell { background: linear-gradient(135deg, #722ED1 0%, #9558DB 100%); }
-.badge-datax { background: linear-gradient(135deg, #FF7D00 0%, #FFA133 100%); }
+
 
 /* 状态改为纯小圆点，hover 时通过 tooltip 显示文字 */
 .status-dot-only {
@@ -808,8 +1365,7 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-  margin-left: auto;
-  margin-right: 10px;
+  margin-right: 4px;
   opacity: 0.7;
   transition: opacity 0.15s;
 }
@@ -899,11 +1455,7 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
   flex-shrink: 0;
 }
 .tab-close:hover { background: #F53F3F; color: #fff; }
-.lang-badge-sm {
-  font-size: 9px; font-weight: 700;
-  padding: 1px 3px; border-radius: 2px;
-  color: #fff; flex-shrink: 0;
-}
+
 .add-tab-btn { flex-shrink: 0; margin: 0 4px; }
 
 /* Toolbar */
@@ -922,7 +1474,7 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 
 /* Result panel */
 .result-panel {
-  height: 280px;
+  max-height: 360px;
   flex-shrink: 0;
   border-top: 1px solid #E5E6EB;
   display: flex;
