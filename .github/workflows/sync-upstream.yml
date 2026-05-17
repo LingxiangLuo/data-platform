@@ -24,7 +24,7 @@ jobs:
           git remote add upstream https://github.com/barryLiu199/data-platform-mvp.git
           git fetch upstream main
 
-          git checkout main
+          git checkout -B main origin/main
           git reset --hard upstream/main
 
           # 上游没有 .github/workflows/，reset 后把 CI 文件从 origin/main 恢复回来
@@ -43,7 +43,7 @@ jobs:
           git checkout dev
           git reset --hard origin/dev
 
-          if git merge main --no-edit; then
+          if git merge origin/main --no-edit; then
             git push origin dev
             echo "✅ dev synced with upstream"
           else
