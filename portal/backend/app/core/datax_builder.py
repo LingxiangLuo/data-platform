@@ -222,6 +222,7 @@ def build_for_sync_task(task, source_ds: DataSource, target_ds: DataSource, mask
         where_clause=task.where_clause,
         split_pk=task.split_pk,
         write_mode=task.write_mode or "insert",
+        channel=task.channel or 3,
         pre_sql=_load(task.pre_sql),
         post_sql=_load(task.post_sql),
         mask_password=mask_password,

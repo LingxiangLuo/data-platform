@@ -30,14 +30,13 @@ class SyncTaskCreate(BaseModel):
     target_table: str
     sync_type: str = "full"
     increment_column: Optional[str] = None
-    schedule_cron: Optional[str] = None
     field_mapping: Optional[List[FieldMapping]] = None
-    # ---- DataWorks 风格高级参数 ----
-    where_clause: Optional[str] = None       # 源端 WHERE 过滤
-    split_pk: Optional[str] = None           # DataX splitPk
-    write_mode: Optional[str] = "insert"     # insert / replace / update
-    pre_sql: Optional[List[str]] = None      # 导入前 SQL
-    post_sql: Optional[List[str]] = None     # 导入后 SQL
+    where_clause: Optional[str] = None
+    split_pk: Optional[str] = None
+    write_mode: Optional[str] = "insert"
+    channel: Optional[int] = 3
+    pre_sql: Optional[List[str]] = None
+    post_sql: Optional[List[str]] = None
 
 
 def _serialize(task: SyncTask) -> dict:
@@ -59,11 +58,11 @@ def _serialize(task: SyncTask) -> dict:
         "target_table": task.target_table,
         "sync_type": task.sync_type,
         "increment_column": task.increment_column,
-        "schedule_cron": task.schedule_cron,
         "field_mapping": _parse_json(task.field_mapping),
         "where_clause": task.where_clause,
         "split_pk": task.split_pk,
         "write_mode": task.write_mode or "insert",
+        "channel": task.channel or 3,
         "pre_sql": _parse_json(task.pre_sql),
         "post_sql": _parse_json(task.post_sql),
         "ds_workflow_id": task.ds_workflow_id,
@@ -106,14 +105,12 @@ def create_task(
     current_user: SysUser = Depends(require_permission("sync:write")),
 ):
     import json
-    # 验证数据源存在
     source = db.query(DataSource).filter(DataSource.id == req.source_id).first()
     target = db.query(DataSource).filter(DataSource.id == req.target_id).first()
     if not source or not target:
         raise HTTPException(status_code=400, detail="数据源不存在")
 
     payload = req.model_dump()
-    # JSON 化列表 / 复合字段
     fm = payload.pop("field_mapping", None)
     if fm:
         payload["field_mapping"] = json.dumps(fm, ensure_ascii=False)
@@ -175,7 +172,7 @@ def set_task_status(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(require_permission("sync:write")),
 ):
-    """切换同步任务状态：active（上线/只读保护）/ draft（下线/可编辑）"""
+    """切换同步任务状态：active / draft / paused"""
     allowed = {"draft", "active", "paused"}
     if status not in allowed:
         raise HTTPException(status_code=400, detail=f"不支持的状态: {status}")
@@ -194,9 +191,25 @@ def delete_task(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(require_permission("sync:write")),
 ):
+    from app.models.component import Component
+    from app.models.workflow import Workflow
+
     task = db.query(SyncTask).filter(SyncTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 清理关联的 datax Component（及其引用的 Workflow）
+    comps = db.query(Component).filter(Component.type == "datax").all()
+    for comp in comps:
+        if (comp.config_json or {}).get("sync_task_id") == task_id:
+            # 删除引用该组件的 Workflow
+            wfs = db.query(Workflow).all()
+            for wf in wfs:
+                steps = wf.steps_json or []
+                if any(s.get("component_id") == comp.id for s in steps):
+                    db.delete(wf)
+            db.delete(comp)
+
     db.delete(task)
     db.commit()
     return {"message": "删除成功"}
@@ -205,7 +218,6 @@ def delete_task(
 # ============ DataX 预览 & 连接测试 ============
 
 class DataXPreviewRequest(BaseModel):
-    """未落库时基于表单数据生成预览"""
     source_id: int
     target_id: int
     source_table: str
@@ -222,7 +234,7 @@ class DataXPreviewRequest(BaseModel):
 
 class TestConnectionRequest(BaseModel):
     datasource_id: int
-    table: Optional[str] = None  # 传表名时会同时验证表是否存在
+    table: Optional[str] = None
 
 
 @router.get("/{task_id}/preview-datax")
@@ -290,137 +302,136 @@ def test_connection(
     ds = db.query(DataSource).filter(DataSource.id == req.datasource_id).first()
     if not ds:
         raise HTTPException(status_code=404, detail="数据源不存在")
-
     from app.core.db_adapter import test_connection as adapter_test
     ok, msg = adapter_test(ds, table=req.table)
     return {"ok": ok, "message": msg}
 
 
-# ============ DataX 执行 ============
-
-def _parse_datax_summary(log: str) -> dict:
-    """从 DataX 控制台日志中抽取关键指标"""
-    import re
-    summary = {
-        "total_read": None,
-        "total_write": None,
-        "failed_record": None,
-        "duration_seconds": None,
-        "speed_records_per_sec": None,
-        "speed_bytes_per_sec": None,
-    }
-    # 任务结果汇总常见于日志尾部
-    m = re.search(r"任务启动时刻[\s\S]+?读出记录总数\s*:\s*(\d+)", log)
-    if m:
-        summary["total_read"] = int(m.group(1))
-    m = re.search(r"读写失败总数\s*:\s*(\d+)", log)
-    if m:
-        summary["failed_record"] = int(m.group(1))
-    m = re.search(r"任务总计耗时\s*:\s*(\d+)\s*s", log)
-    if m:
-        summary["duration_seconds"] = int(m.group(1))
-    m = re.search(r"记录写入速度\s*:\s*([\d.]+)\s*rec/s", log)
-    if m:
-        summary["speed_records_per_sec"] = float(m.group(1))
-    m = re.search(r"字节写入速度\s*:\s*([\d.]+)\s*B/s", log)
-    if m:
-        summary["speed_bytes_per_sec"] = float(m.group(1))
-    # write 数等于 read - failed
-    if summary["total_read"] is not None and summary["failed_record"] is not None:
-        summary["total_write"] = summary["total_read"] - summary["failed_record"]
-    return summary
-
-
-@router.post("/{task_id}/run")
-def run_task(
+@router.post("/{task_id}/publish-as-workflow")
+async def publish_as_workflow(
     task_id: int,
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(require_permission("sync:write")),
 ):
-    """同步执行 DataX 任务（前台运行，限时 5 分钟）。
-
-    架构：复用 dmp-ds 容器执行（它已自带 Java + DataX）。
-    - portal-api 将 job.json 写到共享卷 /opt/datax/jobs/，dmp-ds 通过 ./datax:/opt/datax 看到同一路径
-    - 通过 docker SDK 在 dmp-ds 内执行 datax.py
-    - 解析 stdout，提取读/写/失败/耗时
-    - 回写 last_run_time / last_run_status
-    """
-    import json, os, time, datetime
-    from app.core.datax_builder import build_for_sync_task
+    """将同步任务发布为单节点工作流：自动创建 datax 组件 + 单步工作流，并同步到 DS。"""
+    import json
+    from app.models.component import Component
+    from app.models.workflow import Workflow
+    from app.models.resource_access import SysResourceAccess
 
     task = db.query(SyncTask).filter(SyncTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    src = db.query(DataSource).filter(DataSource.id == task.source_id).first()
-    dst = db.query(DataSource).filter(DataSource.id == task.target_id).first()
-    if not src or not dst:
+
+    source_ds = db.query(DataSource).filter(DataSource.id == task.source_id).first()
+    target_ds = db.query(DataSource).filter(DataSource.id == task.target_id).first()
+    if not source_ds or not target_ds:
         raise HTTPException(status_code=400, detail="任务关联的数据源已被删除")
 
+    from app.core.datax_builder import build_for_sync_task
     try:
-        job = build_for_sync_task(task, src, dst, mask_password=False)
+        datax_job = build_for_sync_task(task, source_ds, target_ds, mask_password=False)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # 共享卷：portal-api 与 dmp-ds 都能访问 /opt/datax/jobs/
-    jobs_dir = os.environ.get("DATAX_JOBS_DIR", "/opt/datax/jobs")
-    os.makedirs(jobs_dir, exist_ok=True)
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    job_filename = f"sync_{task_id}_{ts}.json"
-    job_path = os.path.join(jobs_dir, job_filename)
-    with open(job_path, "w", encoding="utf-8") as f:
-        json.dump(job, f, ensure_ascii=False, indent=2)
+    new_raw_json = json.dumps(datax_job, ensure_ascii=False)
+    config = {
+        "sync_task_id": task.id,
+        "source_table": task.source_table,
+        "target_table": task.target_table,
+        "rawJson": new_raw_json,
+    }
 
-    # 通过 docker SDK 调起 dmp-ds 容器内的 datax
-    ds_container = os.environ.get("DATAX_EXEC_CONTAINER", "dmp-ds")
-    datax_home_in_ds = os.environ.get("DATAX_HOME", "/opt/datax")
+    # 幂等：若已存在关联的 datax 组件，只更新 config_json 和 rawJson，不重复创建
+    existing_comp = (
+        db.query(Component)
+        .filter(Component.type == "datax")
+        .all()
+    )
+    existing_comp = next(
+        (c for c in existing_comp if (c.config_json or {}).get("sync_task_id") == task.id),
+        None,
+    )
+    if existing_comp:
+        existing_comp.config_json = config
+        db.commit()
+        db.refresh(existing_comp)
+        wf_id = task.ds_workflow_id
+        return {
+            "component_id": existing_comp.id,
+            "workflow_id": wf_id,
+            "ds_process_code": None,
+        }
 
-    started_at = datetime.datetime.now()
-    success = False
-    out = ""
-    exit_code = -1
+    comp_name = f"[DataX] {task.name}"
+    comp = Component(
+        name=comp_name,
+        type="datax",
+        description=f"由同步任务 #{task.id} 自动生成",
+        config_json=config,
+        status="online",
+        version=1,
+        created_by=current_user.id,
+    )
+    db.add(comp)
+    db.flush()
 
+    db.add(SysResourceAccess(
+        resource_type="component",
+        resource_id=comp.id,
+        subject_type="user",
+        subject_id=current_user.id,
+        permission="admin",
+        granted_by=current_user.id,
+    ))
+
+    wf_name = f"[同步] {task.name}"
+    wf = Workflow(
+        name=wf_name,
+        description=f"由同步任务 #{task.id} 自动生成的单节点工作流",
+        tags=[],
+        steps_json=[{"component_id": comp.id, "name": comp_name}],
+        dag_json=None,
+        cron_expression=None,
+        schedule_status="OFFLINE",
+        status="draft",
+        version=1,
+        priority=3,
+        created_by=current_user.id,
+    )
+    db.add(wf)
+    db.flush()
+
+    db.add(SysResourceAccess(
+        resource_type="workflow",
+        resource_id=wf.id,
+        subject_type="user",
+        subject_id=current_user.id,
+        permission="admin",
+        granted_by=current_user.id,
+    ))
+
+    from app.api.workflow import _sync_to_ds
+    pd_code = None
     try:
-        import docker
-        client = docker.from_env(timeout=320)
-        container = client.containers.get(ds_container)
-        cmd = ["python", f"{datax_home_in_ds}/bin/datax.py", f"{datax_home_in_ds}/jobs/{job_filename}"]
-        # exec_run 会一次性返回；DataX 通常单表几秒到几十秒
-        result = container.exec_run(
-            cmd,
-            stdout=True, stderr=True, demux=False,
-            environment={"DATAX_HOME": datax_home_in_ds, "LANG": "C.UTF-8"},
-        )
-        exit_code = result.exit_code if result.exit_code is not None else -1
-        raw = result.output or b""
-        try:
-            out = raw.decode("utf-8", errors="replace")
-        except Exception:
-            out = str(raw)
-        success = exit_code == 0
+        pd_code, schedule_id = await _sync_to_ds(db, wf)
+        wf.ds_process_code = pd_code
+        wf.ds_schedule_id = schedule_id
+        wf.status = "online"
+        task.ds_workflow_id = wf.id
     except Exception as e:
-        out = f"[ERROR] 调度 dmp-ds 执行 DataX 失败: {e}"
-        success = False
+        db.rollback()
+        if pd_code:
+            from app.core.ds_client import get_ds_client
+            try:
+                await get_ds_client().delete_process_definition(pd_code)
+            except Exception:
+                pass
+        raise HTTPException(status_code=502, detail=f"DS 同步失败：{e}")
 
-    summary = _parse_datax_summary(out)
-    log_path = job_path.replace(".json", ".log")
-    try:
-        with open(log_path, "w", encoding="utf-8") as f:
-            f.write(out)
-    except Exception:
-        pass
-
-    task.last_run_time = started_at
-    task.last_run_status = "success" if success else "failed"
     db.commit()
-
-    tail = out[-8000:] if len(out) > 8000 else out
     return {
-        "ok": success,
-        "task_id": task_id,
-        "started_at": str(started_at),
-        "exit_code": exit_code,
-        "job_path": job_path,
-        "log_path": log_path,
-        "summary": summary,
-        "log_tail": tail,
+        "component_id": comp.id,
+        "workflow_id": wf.id,
+        "ds_process_code": wf.ds_process_code,
     }

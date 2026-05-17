@@ -4,13 +4,10 @@ import { Message } from '@arco-design/web-vue'
 const api = axios.create({
   baseURL: '/api',
   timeout: 30000,
+  withCredentials: true,  // 自动携带 httponly cookie
 })
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
   return config
 })
 
@@ -19,7 +16,10 @@ api.interceptors.response.use(
   (error) => {
     const msg = error.response?.data?.detail || '请求失败'
     if (error.response?.status === 401) {
-      localStorage.removeItem('token')
+      // 清除 Pinia 内存状态，避免刷新后 beforeEach 误判为已登录
+      import('../stores/user').then(({ useUserStore }) => {
+        useUserStore().logout()
+      })
       window.location.href = '/login'
     } else {
       Message.error(msg)
@@ -32,7 +32,9 @@ api.interceptors.response.use(
 export const login = (data: { username: string; password: string }) =>
   api.post('/auth/login', data)
 
+export const logout = () => api.post('/auth/logout')
 export const getMe = () => api.get('/auth/me')
+export const getMyPermissions = () => api.get('/auth/me/permissions')
 
 // Dashboard
 export const getDashboardStats = () => api.get('/dashboard/stats')
@@ -56,7 +58,8 @@ export const previewSyncTaskDataX = (id: number) => api.get(`/sync-tasks/${id}/p
 export const previewSyncTaskUnsaved = (data: any) => api.post('/sync-tasks/preview', data)
 export const testSyncTaskConnection = (data: { datasource_id: number; table?: string }) =>
   api.post('/sync-tasks/test-connection', data)
-export const runSyncTask = (id: number) => api.post(`/sync-tasks/${id}/run`, undefined, { timeout: 360000 })
+export const runSyncTask = (_id: number) => Promise.reject(new Error('已废弃：请通过工作流运行数据同步任务'))
+export const publishSyncTaskAsWorkflow = (id: number) => api.post(`/sync-tasks/${id}/publish-as-workflow`)
 
 // Alert Rules (监控规则)
 export const getAlertRules = () => api.get('/alert-rules')
@@ -64,7 +67,8 @@ export const createAlertRule = (data: any) => api.post('/alert-rules', data)
 export const updateAlertRule = (id: number, data: any) => api.put(`/alert-rules/${id}`, data)
 export const deleteAlertRule = (id: number) => api.delete(`/alert-rules/${id}`)
 export const toggleAlertRule = (id: number) => api.patch(`/alert-rules/${id}/toggle`)
-export const testAlertNotify = (data: any) => api.post('/alert-rules/test-notify', data)
+export const testAlertNotify = (data: { notify_type?: string; notify_config?: any; channel_id?: number; channel_ids?: number[] }) =>
+  api.post('/alert-rules/test-notify', data)
 
 // Word Roots (词根管理)
 export const getWordRoots = (params?: any) => api.get('/word-roots', { params })
@@ -112,6 +116,7 @@ export const getMetadataTables = (datasource_id: number, keyword?: string, limit
   api.get('/metadata/tables', { params: { datasource_id, keyword, limit } })
 export const getMetadataColumns = (datasource_id: number, table: string) => api.get('/metadata/columns', { params: { datasource_id, table } })
 export const getMetadataPreview = (datasource_id: number, table: string, limit = 10) => api.get('/metadata/preview', { params: { datasource_id, table, limit } })
+export const getMetadataQuality = (datasource_id: number, table: string) => api.get('/metadata/quality', { params: { datasource_id, table } })
 export const generateDDL = (data: { datasource_id: number; target_table: string; columns: any[] }) =>
   api.post('/metadata/generate-ddl', data)
 export const executeDDL = (data: { datasource_id: number; ddl: string }) =>
@@ -151,8 +156,48 @@ export const quickPublishComponent = (id: number) =>
   api.post(`/components/${id}/quick-publish`)
 export const setComponentStatus = (id: number, status: string) =>
   api.put(`/components/${id}/status`, { status })
+// Component Move / Reorder
+export const moveComponent = (id: number, folderId?: number | null, sortOrder?: number) =>
+  api.put(`/components/${id}/move`, { folder_id: folderId ?? 0, sort_order: sortOrder })
+export const reorderComponents = (orders: { id: number; sort_order: number }[]) =>
+  api.post('/components/reorder', { orders })
+export const moveComponentFolder = (id: number, parentId?: number | null, sortOrder?: number) =>
+  api.put(`/components/folders/${id}/move`, { parent_id: parentId ?? 0, sort_order: sortOrder })
 export const resumeComponent = (id: number) =>
   api.post(`/components/${id}/resume`)
+
+// Admin — 用户/角色/权限/SSO/通知配置
+export const adminListUsers = (params?: any) => api.get('/admin/users', { params })
+export const adminCreateUser = (data: any) => api.post('/admin/users', data)
+export const adminUpdateUser = (id: number, data: any) => api.put(`/admin/users/${id}`, data)
+export const adminDeleteUser = (id: number) => api.delete(`/admin/users/${id}`)
+
+export const adminListRoles = () => api.get('/admin/roles')
+export const adminCreateRole = (data: any) => api.post('/admin/roles', data)
+export const adminUpdateRole = (id: number, data: any) => api.put(`/admin/roles/${id}`, data)
+export const adminDeleteRole = (id: number) => api.delete(`/admin/roles/${id}`)
+
+export const adminListPermissions = () => api.get('/admin/permissions')
+
+export const adminListSso = () => api.get('/admin/sso')
+export const adminUpdateSso = (provider: string, data: any) => api.put(`/admin/sso/${provider}`, data)
+export const adminGetSsoPublic = () => api.get('/admin/sso/public')
+
+export const adminGetConfig = (key: string) => api.get(`/admin/config/${key}`)
+export const adminSetConfig = (key: string, data: any) => api.put(`/admin/config/${key}`, data)
+export const adminTestSmtp = () => api.post('/admin/config/smtp/test')
+
+// Admin — 资源级 ACL
+export const adminListResourceAccess = (resource_type: string, resource_id: number) =>
+  api.get('/admin/resource-access', { params: { resource_type, resource_id } })
+export const adminGrantResourceAccess = (data: {
+  resource_type: string; resource_id: number
+  subject_type: string; subject_id: number; permission: string
+}) => api.post('/admin/resource-access', data)
+export const adminRevokeResourceAccess = (data: {
+  resource_type: string; resource_id: number
+  subject_type: string; subject_id: number
+}) => api.delete('/admin/resource-access', { data })
 
 // Workflows
 export const getWorkflows = (params?: any) => api.get('/workflows', { params })
@@ -168,5 +213,12 @@ export const scheduleWorkflowOnline = (id: number) => api.post(`/workflows/${id}
 export const scheduleWorkflowOffline = (id: number) => api.post(`/workflows/${id}/schedule/offline`)
 export const cronPreview = (cron_expression: string) => api.post('/workflows/cron-preview', { cron_expression })
 export const getScheduledWorkflows = () => api.get('/workflows/scheduled')
+
+// Notify Channels
+export const adminListChannels = () => api.get('/admin/notify-channels')
+export const adminCreateChannel = (data: any) => api.post('/admin/notify-channels', data)
+export const adminUpdateChannel = (id: number, data: any) => api.put(`/admin/notify-channels/${id}`, data)
+export const adminDeleteChannel = (id: number) => api.delete(`/admin/notify-channels/${id}`)
+export const adminTestChannel = (id: number) => api.post(`/admin/notify-channels/${id}/test`)
 
 export default api
