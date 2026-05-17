@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.permissions import check_resource_permission
 from app.models.datasource import DataSource
 from app.models.user import SysUser
 
@@ -53,6 +54,7 @@ def list_tables_api(
 ) -> Dict[str, Any]:
     """列出数据源所有表（支持多种数据库）"""
     ds = _get_ds_or_404(db, datasource_id)
+    check_resource_permission(db, current_user, "datasource", datasource_id, "read")
     try:
         from app.core.db_adapter import list_tables as adapter_list_tables
         raw_tables = adapter_list_tables(ds)
@@ -91,6 +93,7 @@ def list_columns_api(
 ) -> Dict[str, Any]:
     """列出某张表的字段（支持多种数据库），含主键/唯一/索引/外键/自增标记"""
     ds = _get_ds_or_404(db, datasource_id)
+    check_resource_permission(db, current_user, "datasource", datasource_id, "read")
     if not all(part.replace("_", "").isalnum() for part in table.split(".")):
         raise HTTPException(status_code=400, detail="表名格式非法")
 
@@ -275,6 +278,7 @@ def preview_table(
 ) -> Dict[str, Any]:
     """前 N 行数据预览（支持多种数据库，通过 SQLAlchemy 执行）"""
     ds = _get_ds_or_404(db, datasource_id)
+    check_resource_permission(db, current_user, "datasource", datasource_id, "read")
     # 允许 schema.table 格式
     if not all(part.replace("_", "").isalnum() for part in table.split(".")):
         raise HTTPException(status_code=400, detail="表名格式非法")
@@ -441,6 +445,7 @@ def generate_ddl(
 ):
     """根据字段列表生成 CREATE TABLE DDL（支持多种数据库）"""
     ds = _get_ds_or_404(db, req.datasource_id)
+    check_resource_permission(db, current_user, "datasource", req.datasource_id, "read")
     if not req.target_table.replace("_", "").isalnum():
         raise HTTPException(status_code=400, detail="表名格式非法")
     ddl = _generate_ddl_sql(ds.type or "mysql", req.target_table, req.columns)
@@ -455,6 +460,7 @@ def execute_ddl(
 ):
     """执行 DDL（只接受 CREATE TABLE 语句以减少风险）"""
     ds = _get_ds_or_404(db, req.datasource_id)
+    check_resource_permission(db, current_user, "datasource", req.datasource_id, "write")
     sql = (req.ddl or "").strip()
     head = sql.lstrip().upper()
     if not head.startswith("CREATE TABLE"):
