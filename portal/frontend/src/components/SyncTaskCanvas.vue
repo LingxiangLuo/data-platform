@@ -27,16 +27,6 @@
           脚本模式
         </a-button>
         <a-button
-          status="success"
-          @click="handleRun"
-          :loading="running"
-          :disabled="!props.taskId"
-          :title="!props.taskId ? '请先保存任务' : '运行同步任务'"
-        >
-          <template #icon><icon-play-arrow /></template>
-          运行
-        </a-button>
-        <a-button
           v-if="!isOnline"
           type="primary"
           @click="handleSave"
@@ -77,10 +67,6 @@
                 {{ p.name }}
               </a-option>
             </a-select>
-          </div>
-          <div class="form-item">
-            <label>调度 CRON</label>
-            <a-input v-model="form.schedule_cron" placeholder="如 0 0 2 * * ?" :disabled="isOnline" />
           </div>
           <div class="form-item">
             <label>通道数</label>
@@ -274,21 +260,6 @@
       <pre class="preview-pre">{{ previewJson }}</pre>
     </a-modal>
 
-    <!-- 运行结果弹窗 -->
-    <a-modal
-      v-model:visible="runModalVisible"
-      :title="runResult?.ok ? '运行成功' : '运行失败'"
-      width="900px"
-      :footer="false"
-    >
-      <div v-if="runResult" class="run-result">
-        <div class="run-summary">
-          <a-descriptions :data="summaryItems" :column="3" size="small" bordered />
-        </div>
-        <div class="run-section-title">DataX 日志（末尾 8000 字符）</div>
-        <pre class="preview-pre">{{ runResult.log_tail || '(无日志)' }}</pre>
-      </div>
-    </a-modal>
   </div>
   <div v-else class="empty-state">
     <icon-folder class="empty-icon" />
@@ -301,12 +272,12 @@ import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import {
   IconImport, IconExport, IconSync, IconSwap, IconEye, IconCode,
-  IconSave, IconFolder, IconPlayArrow, IconLock, IconUnlock,
+  IconSave, IconFolder, IconLock, IconUnlock,
 } from '@arco-design/web-vue/es/icon'
 import {
   getSyncTask, createSyncTask, updateSyncTask, previewSyncTaskUnsaved,
   getDatasources, getMetadataTables, getMetadataColumns,
-  generateDDL, executeDDL, runSyncTask, setSyncTaskStatus,
+  generateDDL, executeDDL, setSyncTaskStatus,
 } from '../api'
 import FieldMappingCanvas from './FieldMappingCanvas.vue'
 
@@ -331,7 +302,6 @@ const form = reactive<any>({
   target_table: '',
   sync_type: 'full',
   increment_column: null,
-  schedule_cron: '',
   field_mapping: [] as any[],
   where_clause: '',
   split_pk: null,
@@ -355,10 +325,6 @@ const saving = ref(false)
 const previewing = ref(false)
 const previewModalVisible = ref(false)
 const previewJson = ref('')
-
-const running = ref(false)
-const runModalVisible = ref(false)
-const runResult = ref<any>(null)
 
 const ddlModalVisible = ref(false)
 const ddlText = ref('')
@@ -396,7 +362,6 @@ async function loadTask() {
       target_table: '',
       sync_type: 'full',
       increment_column: null,
-      schedule_cron: '',
       field_mapping: [],
       where_clause: '',
       split_pk: null,
@@ -422,12 +387,11 @@ async function loadTask() {
       target_table: res.target_table,
       sync_type: res.sync_type || 'full',
       increment_column: res.increment_column,
-      schedule_cron: res.schedule_cron || '',
       field_mapping: res.field_mapping || [],
       where_clause: res.where_clause || '',
       split_pk: res.split_pk,
       write_mode: res.write_mode || 'insert',
-      channel: 3,
+      channel: res.channel ?? 3,
     })
     preSqlText.value = (res.pre_sql || []).join('\n')
     postSqlText.value = (res.post_sql || []).join('\n')
@@ -511,11 +475,11 @@ function buildPayload() {
     target_table: form.target_table,
     sync_type: form.sync_type,
     increment_column: form.increment_column,
-    schedule_cron: form.schedule_cron,
     field_mapping: form.field_mapping,
     where_clause: form.where_clause || null,
     split_pk: form.split_pk || null,
     write_mode: form.write_mode || 'insert',
+    channel: form.channel || 3,
     pre_sql: preSql.length ? preSql : null,
     post_sql: postSql.length ? postSql : null,
   }
@@ -645,40 +609,6 @@ async function confirmExecuteDDL() {
     ddlExecuting.value = false
   }
 }
-
-// ---- 运行任务 ----
-async function handleRun() {
-  if (!props.taskId) {
-    Message.warning('请先保存任务再运行')
-    return
-  }
-  running.value = true
-  try {
-    const res: any = await runSyncTask(props.taskId)
-    runResult.value = res
-    runModalVisible.value = true
-    if (res.ok) {
-      const w = res.summary?.total_write
-      Message.success(w != null ? `运行成功，写入 ${w} 条` : '运行成功')
-    } else {
-      Message.error('运行失败，查看日志')
-    }
-  } catch {} finally {
-    running.value = false
-  }
-}
-
-const summaryItems = computed(() => {
-  const s = runResult.value?.summary || {}
-  return [
-    { label: '读出', value: s.total_read ?? '-' },
-    { label: '写入', value: s.total_write ?? '-' },
-    { label: '失败', value: s.failed_record ?? '-' },
-    { label: '耗时(s)', value: s.duration_seconds ?? '-' },
-    { label: '速度(rec/s)', value: s.speed_records_per_sec ?? '-' },
-    { label: '速度(B/s)', value: s.speed_bytes_per_sec ?? '-' },
-  ]
-})
 
 watch(() => props.taskId, () => loadTask())
 

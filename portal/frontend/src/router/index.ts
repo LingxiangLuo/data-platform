@@ -32,9 +32,7 @@ const router = createRouter({
         },
         {
           path: 'sync-tasks',
-          name: 'SyncTasks',
-          component: () => import('../views/SyncTask.vue'),
-          meta: { title: '数据同步' },
+          redirect: '/sql-dev',
         },
         {
           path: 'sql-dev',

@@ -51,11 +51,7 @@
           </a-menu-item>
           <a-menu-item key="/sql-dev">
             <template #icon><icon-code-block /></template>
-            代码开发
-          </a-menu-item>
-          <a-menu-item key="/sync-tasks">
-            <template #icon><icon-sync /></template>
-            数据同步
+            组件开发
           </a-menu-item>
         </a-sub-menu>
 

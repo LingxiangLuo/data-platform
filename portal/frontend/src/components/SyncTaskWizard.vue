@@ -147,9 +147,6 @@
                   </a-option>
                 </a-select>
               </a-form-item>
-              <a-form-item label="调度 CRON">
-                <a-input v-model="form.schedule_cron" placeholder="例如 0 2 * * ? — 留空 = 仅手动触发" />
-              </a-form-item>
             </a-form>
           </a-col>
           <a-col :span="14">
@@ -172,9 +169,14 @@
         <a-space>
           <a-button v-if="step > 0" @click="step--">上一步</a-button>
           <a-button v-if="step < 3" type="primary" @click="nextStep" :loading="stepLoading">下一步</a-button>
-          <a-button v-if="step === 3" type="primary" @click="save" :loading="saving">
-            {{ editingId ? '保存修改' : '保存任务' }}
-          </a-button>
+          <template v-if="step === 3">
+            <a-button type="outline" @click="save" :loading="saving">
+              {{ editingId ? '保存修改' : '仅保存' }}
+            </a-button>
+            <a-button v-if="!editingId" type="primary" @click="saveAndPublishAsWorkflow" :loading="publishing">
+              发布为工作流
+            </a-button>
+          </template>
         </a-space>
       </div>
     </div>
@@ -189,7 +191,7 @@ import FieldMappingCanvas from './FieldMappingCanvas.vue'
 import {
   getDatasources, getMetadataTables, getMetadataColumns,
   createSyncTask, updateSyncTask, getSyncTask,
-  previewSyncTaskUnsaved,
+  previewSyncTaskUnsaved, publishSyncTaskAsWorkflow, createComponent, updateComponent, getComponents,
 } from '../api'
 
 const props = defineProps<{
@@ -206,6 +208,7 @@ const emit = defineEmits<{
 const step = ref(0)
 const stepLoading = ref(false)
 const saving = ref(false)
+const publishing = ref(false)
 const previewLoading = ref(false)
 
 const dsOptions = ref<any[]>([])
@@ -225,7 +228,6 @@ const form = reactive<any>({
   target_table: '',
   sync_type: 'full',
   increment_column: null,
-  schedule_cron: '',
   field_mapping: [],
 })
 
@@ -356,14 +358,40 @@ async function save() {
       target_table: form.target_table,
       sync_type: form.sync_type,
       increment_column: form.increment_column,
-      schedule_cron: form.schedule_cron,
       field_mapping: form.field_mapping,
     }
     if (props.editingId) {
       await updateSyncTask(props.editingId, payload)
+      // 同步更新关联 Component 的 config_json（保持 source_table/target_table 显示一致）
+      try {
+        const res: any = await getComponents({ type: 'datax', page_size: 500 })
+        const comps: any[] = res?.items || res?.data || res || []
+        const comp = comps.find((c: any) => c.config_json?.sync_task_id === props.editingId)
+        if (comp) {
+          await updateComponent(comp.id, {
+            name: form.name,
+            config_json: {
+              ...comp.config_json,
+              source_table: form.source_table,
+              target_table: form.target_table,
+            },
+          })
+        }
+      } catch {}
       Message.success('修改成功')
     } else {
-      await createSyncTask(payload)
+      const task: any = await createSyncTask(payload)
+      // 同时创建 datax 类型的 Component（草稿状态），使其出现在组件树
+      await createComponent({
+        name: form.name,
+        type: 'datax',
+        description: `DataX 同步：${form.source_table} → ${form.target_table}`,
+        config_json: {
+          sync_task_id: task.id,
+          source_table: form.source_table,
+          target_table: form.target_table,
+        },
+      })
       Message.success('创建成功')
     }
     emit('saved')
@@ -375,13 +403,47 @@ async function save() {
   }
 }
 
+async function saveAndPublishAsWorkflow() {
+  if (!form.name) { Message.warning('请填写任务名称'); return }
+  publishing.value = true
+  try {
+    let taskId: number
+    const payload = {
+      name: form.name,
+      project_id: form.project_id,
+      source_id: form.source_id,
+      target_id: form.target_id,
+      source_table: form.source_table,
+      target_table: form.target_table,
+      sync_type: form.sync_type,
+      increment_column: form.increment_column,
+      field_mapping: form.field_mapping,
+    }
+    if (props.editingId) {
+      await updateSyncTask(props.editingId, payload)
+      taskId = props.editingId
+    } else {
+      const res: any = await createSyncTask(payload)
+      taskId = res.id
+    }
+    const wf: any = await publishSyncTaskAsWorkflow(taskId)
+    Message.success(`已发布为工作流 #${wf.workflow_id}，DS 流程码：${wf.ds_process_code}`)
+    emit('saved')
+    emit('update:visible', false)
+  } catch (e: any) {
+    Message.error(`发布失败：${e?.response?.data?.detail || e?.message || e}`)
+  } finally {
+    publishing.value = false
+  }
+}
+
 function resetForm() {
   step.value = 0
   Object.assign(form, {
     name: '', project_id: props.defaultProjectId || null,
     source_id: null, target_id: null,
     source_table: '', target_table: '',
-    sync_type: 'full', increment_column: null, schedule_cron: '',
+    sync_type: 'full', increment_column: null,
     field_mapping: [],
   })
   srcTables.value = []; dstTables.value = []
@@ -400,7 +462,6 @@ async function loadForEdit() {
   form.target_table = t.target_table
   form.sync_type = t.sync_type
   form.increment_column = t.increment_column
-  form.schedule_cron = t.schedule_cron
   form.field_mapping = t.field_mapping || []
   await Promise.all([loadSrcTables(), loadDstTables()])
   await Promise.all([loadSrcColumns(), loadDstColumns()])

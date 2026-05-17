@@ -58,7 +58,8 @@ export const previewSyncTaskDataX = (id: number) => api.get(`/sync-tasks/${id}/p
 export const previewSyncTaskUnsaved = (data: any) => api.post('/sync-tasks/preview', data)
 export const testSyncTaskConnection = (data: { datasource_id: number; table?: string }) =>
   api.post('/sync-tasks/test-connection', data)
-export const runSyncTask = (id: number) => api.post(`/sync-tasks/${id}/run`, undefined, { timeout: 360000 })
+export const runSyncTask = (_id: number) => Promise.reject(new Error('已废弃：请通过工作流运行数据同步任务'))
+export const publishSyncTaskAsWorkflow = (id: number) => api.post(`/sync-tasks/${id}/publish-as-workflow`)
 
 // Alert Rules (监控规则)
 export const getAlertRules = () => api.get('/alert-rules')

@@ -38,6 +38,7 @@ def _migrate_sync_task_columns():
             ("write_mode",    "ALTER TABLE sync_task ADD COLUMN write_mode VARCHAR(32) DEFAULT 'insert' COMMENT '写入模式'"),
             ("pre_sql",       "ALTER TABLE sync_task ADD COLUMN pre_sql TEXT NULL COMMENT '导入前SQL JSON数组'"),
             ("post_sql",      "ALTER TABLE sync_task ADD COLUMN post_sql TEXT NULL COMMENT '导入后SQL JSON数组'"),
+            ("channel",       "ALTER TABLE sync_task ADD COLUMN channel INT DEFAULT 3 COMMENT 'DataX并发通道数'"),
         ]
         for col, ddl in adds:
             if col not in existing:
