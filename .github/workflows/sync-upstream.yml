@@ -1,0 +1,54 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync main from upstream
+        run: |
+          git remote add upstream https://github.com/barryLiu199/data-platform-mvp.git
+          git fetch upstream main
+
+          git checkout main
+          git reset --hard upstream/main
+
+          # 上游没有 .github/workflows/，reset 后把 CI 文件从 origin/main 恢复回来
+          git fetch origin main
+          git checkout origin/main -- .github/workflows/ 2>/dev/null || true
+
+          if ! git diff --quiet HEAD; then
+            git commit -m "ci: restore workflows after upstream sync"
+          fi
+
+          git push origin main --force
+
+      - name: Merge main into dev
+        run: |
+          git fetch origin dev
+          git checkout dev
+          git reset --hard origin/dev
+
+          if git merge main --no-edit; then
+            git push origin dev
+            echo "✅ dev synced with upstream"
+          else
+            echo "⚠️ Merge conflict — resolve manually"
+            git diff --name-only --diff-filter=U
+            git merge --abort
+            exit 1
+          fi
