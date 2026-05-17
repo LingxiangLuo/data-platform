@@ -212,6 +212,7 @@ async function loadData() {
   } catch {
     items.value = []
     total.value = 0
+    Message.error('加载工作流列表失败')
   }
   loading.value = false
 }
@@ -255,7 +256,7 @@ function runWf(w: Workflow) {
     title: '手动运行',
     content: `立即运行「${w.name}」?`,
     onOk: async () => {
-      try { await runWorkflow(w.id); Message.success('已触发运行') } catch {}
+      try { await runWorkflow(w.id); Message.success('已触发运行'); loadData() } catch {}
     },
   })
 }
