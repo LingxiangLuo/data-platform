@@ -19,6 +19,7 @@ class AlertRule(Base):
     # 通知渠道: email / feishu_webhook
     notify_type = Column(String(32), nullable=False)
     notify_config = Column(JSON, nullable=False)  # {email:"x"} 或 {webhook_url:"x"}
+    notify_channel_ids = Column(JSON, nullable=True)  # [1, 2, 5] — 新字段，引用 sys_notify_channel
     # 开关
     enabled = Column(Boolean, default=True, nullable=False)
     created_by = Column(BigInteger)
