@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.core.permissions import get_accessible_ids, check_resource_permission
+from app.core.permissions import get_accessible_ids, check_resource_permission, require_permission
 from app.core.ds_client import get_ds_client
 from app.core.dsl_translator import translate_workflow, translate_workflow_dag
 from app.models.workflow import Workflow
@@ -370,7 +370,7 @@ def list_workflows(
 def create_workflow(
     req: WorkflowCreate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:create")),
 ):
     steps_data = _validate_steps(db, req.steps)
     dag_data = None
@@ -458,7 +458,7 @@ def update_workflow(
     wf_id: int,
     req: WorkflowUpdate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:write")),
 ):
     w = _get_or_404(db, wf_id)
     if not check_resource_permission(db, current_user, "workflow", wf_id, "write"):
@@ -510,7 +510,7 @@ def update_workflow(
 async def delete_workflow(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:write")),
 ):
     w = _get_or_404(db, wf_id)
     if not check_resource_permission(db, current_user, "workflow", wf_id, "admin"):
@@ -551,7 +551,7 @@ async def delete_workflow(
 def test_workflow(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:write")),
 ):
     """测试工作流 — 检查所有 component 都已发布"""
     w = _get_or_404(db, wf_id)
@@ -592,7 +592,7 @@ def test_workflow(
 async def publish_workflow(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:publish")),
 ):
     """发布工作流 — tested 才能发布,真正同步到 DS"""
     w = _get_or_404(db, wf_id)
@@ -616,7 +616,7 @@ async def publish_workflow(
 async def offline_workflow(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:publish")),
 ):
     w = _get_or_404(db, wf_id)
     if not check_resource_permission(db, current_user, "workflow", wf_id, "write"):
@@ -647,7 +647,7 @@ async def offline_workflow(
 async def run_workflow(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:write")),
 ):
     """手动运行工作流 — 通过 DS 触发"""
     w = _get_or_404(db, wf_id)
@@ -674,7 +674,7 @@ async def run_workflow(
 async def schedule_online(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:publish")),
 ):
     w = _get_or_404(db, wf_id)
     if not check_resource_permission(db, current_user, "workflow", wf_id, "write"):
@@ -706,7 +706,7 @@ async def schedule_online(
 async def schedule_offline(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:publish")),
 ):
     w = _get_or_404(db, wf_id)
     if not check_resource_permission(db, current_user, "workflow", wf_id, "write"):

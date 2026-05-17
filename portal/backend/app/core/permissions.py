@@ -7,14 +7,26 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 
 
+def _is_admin(db: Session, user) -> bool:
+    """判断用户是否为管理员（兼容旧 role 字段和新 RBAC 角色表）"""
+    if getattr(user, "role", None) == "admin":
+        return True
+    from app.models.role import SysUserRole, SysRole
+    return db.query(SysUserRole).join(
+        SysRole, SysRole.id == SysUserRole.role_id
+    ).filter(
+        SysUserRole.user_id == user.id,
+        SysRole.code == "admin",
+    ).first() is not None
+
+
 def require_permission(code: str):
     """返回一个 FastAPI 依赖，校验当前用户是否拥有指定权限码"""
     def dependency(
         current_user=Depends(get_current_user),
         db: Session = Depends(get_db),
     ):
-        # admin 角色（旧字段兼容）直接放行
-        if getattr(current_user, "role", None) == "admin":
+        if _is_admin(db, current_user):
             return current_user
 
         from app.models.role import SysUserRole, SysRolePermission, SysPermission
@@ -50,7 +62,7 @@ def get_accessible_ids(
 
     min_permission 优先级: read < write < admin
     """
-    if getattr(user, "role", None) == "admin":
+    if _is_admin(db, user):
         return None  # admin 不限制
 
     from app.models.resource_access import SysResourceAccess
@@ -101,5 +113,5 @@ def check_resource_permission(
     """检查用户对单个资源是否有指定权限"""
     ids = get_accessible_ids(db, user, resource_type, min_permission)
     if ids is None:
-        return True  # 无限制
+        return True  # 无限制（admin 或无 ACL 记录）
     return resource_id in ids

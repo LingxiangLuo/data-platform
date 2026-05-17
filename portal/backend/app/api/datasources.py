@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.core.permissions import get_accessible_ids, check_resource_permission
+from app.core.permissions import get_accessible_ids, check_resource_permission, require_permission
 from app.models.datasource import DataSource
 from app.models.user import SysUser
 
@@ -76,7 +76,7 @@ def list_datasources(
 def create_datasource(
     req: DataSourceCreate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("datasource:write")),
 ):
     ds = DataSource(**req.model_dump(), created_by=current_user.id)
     db.add(ds)
@@ -117,7 +117,7 @@ def update_datasource(
     ds_id: int,
     req: DataSourceUpdate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("datasource:write")),
 ):
     ds = db.query(DataSource).filter(DataSource.id == ds_id).first()
     if not ds:
@@ -135,7 +135,7 @@ def update_datasource(
 def delete_datasource(
     ds_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("datasource:write")),
 ):
     ds = db.query(DataSource).filter(DataSource.id == ds_id).first()
     if not ds:

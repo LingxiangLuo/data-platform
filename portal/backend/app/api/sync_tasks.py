@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.permissions import require_permission
 from app.models.sync_task import SyncTask
 from app.models.datasource import DataSource
 from app.models.user import SysUser
@@ -102,7 +103,7 @@ def list_tasks(
 def create_task(
     req: SyncTaskCreate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("sync:write")),
 ):
     import json
     # 验证数据源存在
@@ -144,7 +145,7 @@ def update_task(
     task_id: int,
     req: SyncTaskCreate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("sync:write")),
 ):
     import json
     task = db.query(SyncTask).filter(SyncTask.id == task_id).first()
@@ -172,7 +173,7 @@ def set_task_status(
     task_id: int,
     status: str,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("sync:write")),
 ):
     """切换同步任务状态：active（上线/只读保护）/ draft（下线/可编辑）"""
     allowed = {"draft", "active", "paused"}
@@ -191,7 +192,7 @@ def set_task_status(
 def delete_task(
     task_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("sync:write")),
 ):
     task = db.query(SyncTask).filter(SyncTask.id == task_id).first()
     if not task:
@@ -334,7 +335,7 @@ def _parse_datax_summary(log: str) -> dict:
 def run_task(
     task_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("sync:write")),
 ):
     """同步执行 DataX 任务（前台运行，限时 5 分钟）。
 

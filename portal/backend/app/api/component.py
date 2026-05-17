@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.permissions import require_permission
 from app.models.component import Component
 from app.models.user import SysUser
 
@@ -238,7 +239,7 @@ def list_components(
 def create_component(
     req: ComponentCreate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:write")),
 ):
     if req.type not in VALID_TYPES:
         raise HTTPException(status_code=400, detail=f"非法组件类型,允许:{','.join(sorted(VALID_TYPES))}")
@@ -307,7 +308,7 @@ def list_folders(
 def create_folder(
     req: FolderCreate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:write")),
 ):
     if req.parent_id is not None:
         parent = db.query(ComponentFolder).filter(ComponentFolder.id == req.parent_id).first()
@@ -328,7 +329,7 @@ def rename_folder(
     folder_id: int,
     req: FolderRename,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:write")),
 ):
     f = db.query(ComponentFolder).filter(ComponentFolder.id == folder_id).first()
     if not f:
@@ -342,7 +343,7 @@ def rename_folder(
 def delete_folder(
     folder_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:write")),
 ):
     if db.query(ComponentFolder).filter(ComponentFolder.parent_id == folder_id).first():
         raise HTTPException(status_code=400, detail="请先删除子文件夹")
@@ -381,7 +382,7 @@ def update_component(
     comp_id: int,
     req: ComponentUpdate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:write")),
 ):
     c = _get_or_404(db, comp_id)
     if c.status not in EDITABLE_STATUSES:
@@ -415,7 +416,7 @@ def update_component(
 def delete_component(
     comp_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:write")),
 ):
     c = _get_or_404(db, comp_id)
     if c.status not in DELETABLE_STATUSES:
@@ -488,7 +489,7 @@ def run_component(
 def test_component(
     comp_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:write")),
 ):
     c = _get_or_404(db, comp_id)
     if c.status not in {STATUS_DRAFT, STATUS_TESTED}:
@@ -503,7 +504,7 @@ def test_component(
 def publish_component(
     comp_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:publish")),
 ):
     c = _get_or_404(db, comp_id)
     if c.status != STATUS_TESTED:
@@ -521,7 +522,7 @@ def publish_component(
 def quick_publish_component(
     comp_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:publish")),
 ):
     """IDE 一键发布：draft/tested 均可直接上线，跳过 tested 前置要求"""
     c = _get_or_404(db, comp_id)
@@ -539,7 +540,7 @@ def quick_publish_component(
 def offline_component(
     comp_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:publish")),
 ):
     c = _get_or_404(db, comp_id)
     if c.status != STATUS_ONLINE:
