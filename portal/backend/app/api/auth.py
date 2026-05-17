@@ -21,34 +21,81 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
-# 登录暴力破解防护：按 IP 计数，5 次失败后锁定 5 分钟
-_LOGIN_MAX_ATTEMPTS = 5
-_LOGIN_LOCKOUT_SECONDS = 300
+# 登录暴力破解防护：按 IP 计数，优先用 Redis（多实例共享），不可用时降级内存
 _login_attempts: dict[str, list[float]] = defaultdict(list)
 _login_lock = Lock()
+_redis_client = None
+_redis_init_lock = Lock()
+
+
+def _get_redis():
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+    with _redis_init_lock:
+        if _redis_client is not None:
+            return _redis_client
+        try:
+            import redis as redis_lib
+            r = redis_lib.from_url(
+                settings.REDIS_URL,
+                decode_responses=True,
+                socket_connect_timeout=1,
+            )
+            r.ping()
+            _redis_client = r
+            return _redis_client
+        except Exception:
+            return None
 
 
 def _check_login_rate(ip: str) -> None:
+    r = _get_redis()
     now = time.time()
-    with _login_lock:
-        attempts = [t for t in _login_attempts[ip] if now - t < _LOGIN_LOCKOUT_SECONDS]
-        _login_attempts[ip] = attempts
-        if len(attempts) >= _LOGIN_MAX_ATTEMPTS:
-            retry_after = int(_LOGIN_LOCKOUT_SECONDS - (now - attempts[0]))
+    if r:
+        key = f"login_attempts:{ip}"
+        raw = r.get(key)
+        attempts = json.loads(raw) if raw else []
+        attempts = [t for t in attempts if now - t < settings.LOGIN_LOCKOUT_SECONDS]
+        if len(attempts) >= settings.LOGIN_MAX_ATTEMPTS:
+            retry_after = int(settings.LOGIN_LOCKOUT_SECONDS - (now - attempts[0]))
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=f"登录尝试过于频繁，请 {retry_after} 秒后再试",
             )
+    else:
+        with _login_lock:
+            attempts = [t for t in _login_attempts[ip] if now - t < settings.LOGIN_LOCKOUT_SECONDS]
+            _login_attempts[ip] = attempts
+            if len(attempts) >= settings.LOGIN_MAX_ATTEMPTS:
+                retry_after = int(settings.LOGIN_LOCKOUT_SECONDS - (now - attempts[0]))
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"登录尝试过于频繁，请 {retry_after} 秒后再试",
+                )
 
 
 def _record_failed_login(ip: str) -> None:
-    with _login_lock:
-        _login_attempts[ip].append(time.time())
+    r = _get_redis()
+    now = time.time()
+    if r:
+        key = f"login_attempts:{ip}"
+        raw = r.get(key)
+        attempts = json.loads(raw) if raw else []
+        attempts.append(now)
+        r.setex(key, settings.LOGIN_LOCKOUT_SECONDS, json.dumps(attempts))
+    else:
+        with _login_lock:
+            _login_attempts[ip].append(now)
 
 
 def _clear_login_attempts(ip: str) -> None:
-    with _login_lock:
-        _login_attempts.pop(ip, None)
+    r = _get_redis()
+    if r:
+        r.delete(f"login_attempts:{ip}")
+    else:
+        with _login_lock:
+            _login_attempts.pop(ip, None)
 
 
 class LoginRequest(BaseModel):
