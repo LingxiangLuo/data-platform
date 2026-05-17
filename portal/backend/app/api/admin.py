@@ -183,6 +183,8 @@ def delete_user(
         raise HTTPException(404, "用户不存在")
     if user.username == "admin":
         raise HTTPException(400, "不能删除内置管理员")
+    if user.id == current_user.id:
+        raise HTTPException(400, "不能删除自己的账号")
     db.query(SysUserRole).filter(SysUserRole.user_id == user_id).delete()
     db.delete(user)
     db.commit()
@@ -311,7 +313,7 @@ def list_sso(
             "app_id": c.app_id,
             "redirect_uri": c.redirect_uri,
             "enabled": c.enabled,
-            "extra_config": c.extra_config,
+            "extra_config": _redact(c.extra_config) if c.extra_config else None,
         }
         for c in configs
     ]
@@ -345,15 +347,15 @@ def update_sso(
 
 # ─── System Config (SMTP / Notify) ──────────────────────────────────────────
 
-_SENSITIVE_FIELDS = {"password", "secret", "access_key", "secret_key", "token"}
+_SENSITIVE_FIELDS = {"password", "secret", "access_key", "secret_key", "token", "api_key", "credential"}
 
 
 def _redact(value: dict) -> dict:
-    """脱敏：将敏感字段替换为占位符（非空时）"""
+    """脱敏：将敏感字段替换为占位符（递归处理嵌套 dict）"""
     if not isinstance(value, dict):
         return value
     return {
-        k: "***" if k in _SENSITIVE_FIELDS and v else v
+        k: "***" if k in _SENSITIVE_FIELDS and v else (_redact(v) if isinstance(v, dict) else v)
         for k, v in value.items()
     }
 
@@ -537,7 +539,7 @@ def list_notify_channels(
             "id": c.id,
             "name": c.name,
             "type": c.type,
-            "config": c.config,
+            "config": _redact(c.config) if c.config else None,
             "enabled": c.enabled,
             "created_at": str(c.created_at) if c.created_at else None,
             "updated_at": str(c.updated_at) if c.updated_at else None,

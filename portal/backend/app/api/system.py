@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from app.core.database import get_db
 from app.core.ds_client import get_ds_client
+from app.core.permissions import require_permission
 
 router = APIRouter(prefix="/system", tags=["系统监控"])
 
@@ -45,7 +46,10 @@ def _check_mysql(db: Session) -> bool:
 
 
 @router.get("/services")
-async def list_services(db: Session = Depends(get_db)) -> Dict[str, Any]:
+async def list_services(
+    db: Session = Depends(get_db),
+    _=Depends(require_permission("monitor:read")),
+) -> Dict[str, Any]:
     """实时服务健康状态。MVP 架构 OpenMetadata 已废弃,不再上报"""
     mysql_ok = _check_mysql(db)
     redis_ok = _redis_ping()
@@ -102,7 +106,7 @@ async def list_services(db: Session = Depends(get_db)) -> Dict[str, Any]:
 
 
 @router.get("/info")
-async def system_info() -> Dict[str, Any]:
+async def system_info(_=Depends(require_permission("monitor:read"))) -> Dict[str, Any]:
     """动态系统信息 — 替代前端硬编码"""
     import os
     import platform
