@@ -11,7 +11,12 @@ from sqlalchemy import text
 from app.core.database import engine, Base, SessionLocal
 from app.core.security import hash_password
 from app.api import auth, datasources, sync_tasks, dashboard, ds_proxy, notifications, component, workflow, system, metadata, project
-from app.models.component_folder import ComponentFolder  # noqa: F401 — 确保 create_all 创建该表
+from app.models.component_folder import ComponentFolder  # noqa: F401
+from app.models.role import SysRole, SysPermission, SysRolePermission, SysUserRole  # noqa: F401
+from app.models.resource_access import SysResourceAccess  # noqa: F401
+from app.models.oauth_config import SysOAuthConfig  # noqa: F401
+from app.models.sys_config import SysConfig  # noqa: F401
+from app.models.sys_notify_channel import SysNotifyChannel  # noqa: F401
 
 # 创建表
 Base.metadata.create_all(bind=engine)
@@ -102,6 +107,7 @@ def _migrate_alert_rule_table():
                     trigger_value INT NULL,
                     notify_type VARCHAR(32) NOT NULL,
                     notify_config JSON NOT NULL,
+                    notify_channel_ids JSON NULL COMMENT '通知渠道ID列表',
                     enabled TINYINT NOT NULL DEFAULT 1,
                     created_by BIGINT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -177,6 +183,162 @@ def _migrate_folder_sort_order():
 _migrate_folder_sort_order()
 
 
+def _migrate_sys_user_columns():
+    """sys_user 表按需新增 RBAC/OAuth 相关列"""
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_user'"
+        )).fetchall()
+        existing = {r[0] for r in rows}
+        adds = [
+            ("avatar",         "ALTER TABLE sys_user ADD COLUMN avatar VARCHAR(512) NULL COMMENT '头像URL'"),
+            ("dept_id",        "ALTER TABLE sys_user ADD COLUMN dept_id BIGINT NULL COMMENT '部门ID'"),
+            ("last_login_at",  "ALTER TABLE sys_user ADD COLUMN last_login_at DATETIME NULL COMMENT '最近登录时间'"),
+            ("oauth_provider", "ALTER TABLE sys_user ADD COLUMN oauth_provider VARCHAR(32) NULL COMMENT 'SSO提供商'"),
+            ("oauth_openid",   "ALTER TABLE sys_user ADD COLUMN oauth_openid VARCHAR(128) NULL COMMENT 'SSO OpenID'"),
+        ]
+        for col, ddl in adds:
+            if col not in existing:
+                conn.execute(text(ddl))
+                conn.commit()
+
+
+_migrate_sys_user_columns()
+
+
+def _migrate_sys_notify_channel_table():
+    """按需创建 sys_notify_channel 表"""
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT TABLE_NAME FROM information_schema.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_notify_channel'"
+        )).fetchall()
+        if not rows:
+            conn.execute(text("""
+                CREATE TABLE sys_notify_channel (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(128) NOT NULL COMMENT '渠道名称',
+                    type VARCHAR(32) NOT NULL COMMENT 'email/feishu_webhook/dingtalk_webhook/wecom_webhook',
+                    config JSON NOT NULL COMMENT '渠道配置JSON',
+                    enabled TINYINT NOT NULL DEFAULT 1,
+                    created_by BIGINT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+            conn.commit()
+
+
+_migrate_sys_notify_channel_table()
+
+
+def _migrate_alert_rule_channel_ids():
+    """alert_rule 表按需新增 notify_channel_ids 列（JSON 数组）"""
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'alert_rule'"
+        )).fetchall()
+        existing = {r[0] for r in rows}
+        if 'notify_channel_ids' not in existing:
+            conn.execute(text(
+                "ALTER TABLE alert_rule ADD COLUMN notify_channel_ids JSON NULL COMMENT '通知渠道ID列表'"
+            ))
+            conn.commit()
+
+
+_migrate_alert_rule_channel_ids()
+
+
+# ─── 种子数据：4 个内置角色 + 权限列表 ──────────────────────────────────────
+
+_BUILTIN_PERMISSIONS = [
+    ("user:manage",     "用户管理",     "user",       "manage"),
+    ("role:manage",     "角色管理",     "role",       "manage"),
+    ("system:config",   "系统配置",     "system",     "config"),
+    ("datasource:read", "数据源查看",   "datasource", "read"),
+    ("datasource:write","数据源编辑",   "datasource", "write"),
+    ("component:read",  "组件查看",     "component",  "read"),
+    ("component:create","组件创建",     "component",  "create"),
+    ("component:write", "组件编辑",     "component",  "write"),
+    ("workflow:read",   "工作流查看",   "workflow",   "read"),
+    ("workflow:create", "工作流创建",   "workflow",   "create"),
+    ("workflow:write",  "工作流编辑",   "workflow",   "write"),
+    ("sync:read",       "数据同步查看", "sync",       "read"),
+    ("sync:write",      "数据同步编辑", "sync",       "write"),
+    ("metadata:read",   "数据资产查看", "metadata",   "read"),
+    ("monitor:read",    "系统监控查看", "monitor",    "read"),
+]
+
+_BUILTIN_ROLES = {
+    "admin": {
+        "name": "管理员",
+        "description": "拥有所有权限",
+        "permissions": [p[0] for p in _BUILTIN_PERMISSIONS],
+    },
+    "developer": {
+        "name": "开发者",
+        "description": "可管理数据源、组件、工作流、数据同步",
+        "permissions": [
+            "datasource:read", "datasource:write",
+            "component:read", "component:create", "component:write",
+            "workflow:read", "workflow:create", "workflow:write",
+            "sync:read", "sync:write",
+            "metadata:read", "monitor:read",
+        ],
+    },
+    "analyst": {
+        "name": "分析师",
+        "description": "可查看数据资产和运行实例",
+        "permissions": ["metadata:read", "monitor:read", "workflow:read", "component:read"],
+    },
+    "viewer": {
+        "name": "只读用户",
+        "description": "只能查看数据资产",
+        "permissions": ["metadata:read"],
+    },
+}
+
+
+def _seed_roles_and_permissions():
+    from app.models.role import SysRole, SysPermission, SysRolePermission
+    db = SessionLocal()
+    try:
+        for code, name, resource_type, action in _BUILTIN_PERMISSIONS:
+            if not db.query(SysPermission).filter(SysPermission.code == code).first():
+                db.add(SysPermission(code=code, name=name, resource_type=resource_type, action=action))
+        db.flush()
+
+        for role_code, role_info in _BUILTIN_ROLES.items():
+            role = db.query(SysRole).filter(SysRole.code == role_code).first()
+            if not role:
+                role = SysRole(
+                    code=role_code,
+                    name=role_info["name"],
+                    description=role_info["description"],
+                    is_system=True,
+                )
+                db.add(role)
+                db.flush()
+
+            existing_perm_ids = {
+                rp.permission_id
+                for rp in db.query(SysRolePermission).filter(SysRolePermission.role_id == role.id).all()
+            }
+            for perm_code in role_info["permissions"]:
+                perm = db.query(SysPermission).filter(SysPermission.code == perm_code).first()
+                if perm and perm.id not in existing_perm_ids:
+                    db.add(SysRolePermission(role_id=role.id, permission_id=perm.id))
+
+        db.commit()
+    finally:
+        db.close()
+
+
+_seed_roles_and_permissions()
+
+
 # 确保管理员密码正确
 def _ensure_admin():
     from app.models.user import SysUser
@@ -244,6 +406,9 @@ app.include_router(alert_rules.router, prefix="/api")
 
 from app.api import word_roots
 app.include_router(word_roots.router, prefix="/api")
+
+from app.api import admin
+app.include_router(admin.router, prefix="/api")
 
 
 @app.get("/api/health")

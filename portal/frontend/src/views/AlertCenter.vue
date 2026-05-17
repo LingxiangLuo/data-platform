@@ -3,7 +3,7 @@
     <div class="glass-card page-header">
       <div>
         <h3 class="page-title">监控规则</h3>
-        <p class="page-desc">配置告警规则，工作流异常时自动通知到飞书或邮箱</p>
+        <p class="page-desc">配置告警规则，工作流异常时自动通知到已配置的通知渠道</p>
       </div>
       <a-button type="primary" @click="openCreate">
         <template #icon><icon-plus /></template>
@@ -26,12 +26,16 @@
               <a-tag :color="triggerColor(record.trigger_type)" size="small">{{ triggerLabel(record) }}</a-tag>
             </template>
           </a-table-column>
-          <a-table-column title="通知方式" :width="120">
+          <a-table-column title="通知渠道" :width="200">
             <template #cell="{ record }">
-              <span class="notify-badge">
-                <span class="notify-icon">{{ record.notify_type === 'feishu_webhook' ? '🔔' : '📧' }}</span>
-                {{ record.notify_type === 'feishu_webhook' ? '飞书' : '邮件' }}
-              </span>
+              <template v-if="record.notify_channel_names && record.notify_channel_names.length">
+                <a-space :size="4" wrap>
+                  <a-tag v-for="name in record.notify_channel_names" :key="name" size="small" color="arcoblue">
+                    {{ name }}
+                  </a-tag>
+                </a-space>
+              </template>
+              <span v-else class="text-muted">—</span>
             </template>
           </a-table-column>
           <a-table-column title="状态" :width="80">
@@ -59,7 +63,13 @@
     </div>
 
     <!-- 新建/编辑模态框 -->
-    <a-modal v-model:visible="modalVisible" :title="editingId ? '编辑规则' : '新建规则'" :width="560" @ok="handleSave" :unmount-on-close="true">
+    <a-modal
+      v-model:visible="modalVisible"
+      :title="editingId ? '编辑规则' : '新建规则'"
+      :width="560"
+      @ok="handleSave"
+      :unmount-on-close="true"
+    >
       <a-form :model="form" layout="vertical">
         <a-form-item label="规则名称" required>
           <a-input v-model="form.name" placeholder="例如：ODS同步失败告警" />
@@ -92,25 +102,33 @@
           </a-col>
           <a-col :span="12" v-if="form.trigger_type === 'timeout'">
             <a-form-item label="超时阈值（秒）">
-              <a-input-number v-model="form.trigger_value" :min="60" :step="60" placeholder="600" />
+              <a-input-number v-model="form.trigger_value" :min="60" :step="60" placeholder="600" style="width: 100%" />
             </a-form-item>
           </a-col>
         </a-row>
-        <a-row :gutter="16">
-          <a-col :span="12">
-            <a-form-item label="通知方式">
-              <a-select v-model="form.notify_type">
-                <a-option value="feishu_webhook">飞书机器人</a-option>
-                <a-option value="email">邮件</a-option>
-              </a-select>
-            </a-form-item>
-          </a-col>
-          <a-col :span="12">
-            <a-form-item :label="form.notify_type === 'feishu_webhook' ? 'Webhook URL' : '邮箱地址'">
-              <a-input v-model="notifyValue" :placeholder="form.notify_type === 'feishu_webhook' ? 'https://open.feishu.cn/open-apis/bot/v2/hook/...' : 'alert@example.com'" />
-            </a-form-item>
-          </a-col>
-        </a-row>
+        <a-form-item label="通知渠道" required>
+          <a-select
+            v-model="form.notify_channel_ids"
+            multiple
+            placeholder="选择一个或多个通知渠道"
+            allow-search
+            :loading="channelsLoading"
+            :max-tag-count="3"
+          >
+            <a-option v-for="ch in channels" :key="ch.id" :value="ch.id" :disabled="!ch.enabled">
+              <a-space :size="6">
+                <a-tag :color="typeColor(ch.type)" size="small">{{ typeLabel(ch.type) }}</a-tag>
+                <span>{{ ch.name }}</span>
+                <span v-if="!ch.enabled" class="text-muted">（已停用）</span>
+              </a-space>
+            </a-option>
+          </a-select>
+          <div class="field-hint">
+            在
+            <a-link @click="goToNotifyConfig">通知配置</a-link>
+            中管理渠道
+          </div>
+        </a-form-item>
       </a-form>
     </a-modal>
   </div>
@@ -120,9 +138,10 @@
 import { ref, onMounted } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
 import { IconPlus } from '@arco-design/web-vue/es/icon'
+import { useRouter } from 'vue-router'
 import {
   getAlertRules, createAlertRule, updateAlertRule, deleteAlertRule,
-  toggleAlertRule, testAlertNotify, getWorkflows,
+  toggleAlertRule, testAlertNotify, getWorkflows, adminListChannels,
 } from '../api'
 
 interface Rule {
@@ -133,17 +152,26 @@ interface Rule {
   target_name?: string
   trigger_type: string
   trigger_value?: number
-  notify_type: string
-  notify_config: any
+  notify_channel_ids: number[]
+  notify_channel_names: string[]
   enabled: boolean
 }
 
+interface Channel {
+  id: number
+  name: string
+  type: string
+  enabled: boolean
+}
+
+const router = useRouter()
 const loading = ref(false)
+const channelsLoading = ref(false)
 const rules = ref<Rule[]>([])
 const workflows = ref<any[]>([])
+const channels = ref<Channel[]>([])
 const modalVisible = ref(false)
 const editingId = ref<number | null>(null)
-const notifyValue = ref('')
 
 const form = ref({
   name: '',
@@ -151,8 +179,13 @@ const form = ref({
   target_id: undefined as number | undefined,
   trigger_type: 'failure',
   trigger_value: 600,
-  notify_type: 'feishu_webhook',
+  notify_channel_ids: [] as number[],
 })
+
+const typeColor = (t: string) =>
+  ({ feishu_webhook: 'blue', dingtalk_webhook: 'cyan', wecom_webhook: 'green', email: 'orange' } as any)[t] || 'gray'
+const typeLabel = (t: string) =>
+  ({ feishu_webhook: '飞书', dingtalk_webhook: '钉钉', wecom_webhook: '企微', email: '邮件' } as any)[t] || t
 
 function triggerColor(t: string) {
   return ({ failure: 'red', timeout: 'orange', consecutive_failure: 'purple' } as any)[t] || 'gray'
@@ -162,6 +195,10 @@ function triggerLabel(r: Rule) {
   if (r.trigger_type === 'timeout') return `超时 > ${r.trigger_value || 0}s`
   if (r.trigger_type === 'consecutive_failure') return `连续失败 ${r.trigger_value} 次`
   return r.trigger_type
+}
+
+function goToNotifyConfig() {
+  router.push('/admin/notify')
 }
 
 async function loadData() {
@@ -180,10 +217,18 @@ async function loadWorkflows() {
   } catch {}
 }
 
+async function loadChannels() {
+  channelsLoading.value = true
+  try {
+    const res: any = await adminListChannels()
+    channels.value = Array.isArray(res) ? res : (res?.items || [])
+  } catch { channels.value = [] }
+  channelsLoading.value = false
+}
+
 function openCreate() {
   editingId.value = null
-  form.value = { name: '', target_type: 'all', target_id: undefined, trigger_type: 'failure', trigger_value: 600, notify_type: 'feishu_webhook' }
-  notifyValue.value = ''
+  form.value = { name: '', target_type: 'all', target_id: undefined, trigger_type: 'failure', trigger_value: 600, notify_channel_ids: [] }
   modalVisible.value = true
 }
 
@@ -195,22 +240,23 @@ function openEdit(r: Rule) {
     target_id: r.target_id,
     trigger_type: r.trigger_type,
     trigger_value: r.trigger_value || 600,
-    notify_type: r.notify_type,
+    notify_channel_ids: r.notify_channel_ids || [],
   }
-  const cfg = r.notify_config || {}
-  notifyValue.value = cfg.webhook_url || cfg.email || ''
   modalVisible.value = true
 }
 
 async function handleSave() {
   if (!form.value.name.trim()) { Message.warning('请填写规则名称'); return }
-  if (!notifyValue.value.trim()) { Message.warning('请填写通知地址'); return }
+  if (!form.value.notify_channel_ids.length) { Message.warning('请选择至少一个通知渠道'); return }
 
-  const notify_config = form.value.notify_type === 'feishu_webhook'
-    ? { webhook_url: notifyValue.value.trim() }
-    : { email: notifyValue.value.trim() }
-
-  const payload = { ...form.value, notify_config }
+  const payload = {
+    name: form.value.name.trim(),
+    target_type: form.value.target_type,
+    target_id: form.value.target_type === 'workflow' ? form.value.target_id : undefined,
+    trigger_type: form.value.trigger_type,
+    trigger_value: form.value.trigger_type === 'timeout' ? form.value.trigger_value : undefined,
+    notify_channel_ids: form.value.notify_channel_ids,
+  }
   try {
     if (editingId.value) {
       await updateAlertRule(editingId.value, payload)
@@ -232,8 +278,12 @@ async function handleToggle(r: Rule) {
 }
 
 async function handleTest(r: Rule) {
+  if (!r.notify_channel_ids?.length) {
+    Message.warning('该规则未配置通知渠道')
+    return
+  }
   try {
-    await testAlertNotify({ notify_type: r.notify_type, notify_config: r.notify_config })
+    await testAlertNotify({ channel_ids: r.notify_channel_ids })
     Message.success('测试通知已发送，请检查接收端')
   } catch (e: any) {
     Message.error(e?.response?.data?.detail || '发送失败')
@@ -250,7 +300,7 @@ function handleDelete(r: Rule) {
   })
 }
 
-onMounted(() => { loadData(); loadWorkflows() })
+onMounted(() => { loadData(); loadWorkflows(); loadChannels() })
 </script>
 
 <style scoped>
@@ -264,9 +314,7 @@ onMounted(() => { loadData(); loadWorkflows() })
 .table-card { padding: 0; overflow: auto; }
 .text-muted { color: #86909C; }
 .empty-state { padding: 40px 0; text-align: center; }
-
-.notify-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
-.notify-icon { font-size: 14px; }
+.field-hint { margin-top: 4px; font-size: 12px; color: #86909C; }
 
 :deep(.arco-table-th) { background: #FAFBFC !important; }
 </style>
