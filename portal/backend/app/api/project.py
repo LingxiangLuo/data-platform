@@ -11,6 +11,7 @@ from sqlalchemy import func
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.permissions import require_permission
 from app.models.project import Project
 from app.models.sync_task import SyncTask
 from app.models.user import SysUser
@@ -101,7 +102,7 @@ def list_projects(
 def create_project(
     req: ProjectCreate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("sync:write")),
 ):
     # 唯一性
     if db.query(Project).filter(Project.name == req.name).first():
@@ -147,7 +148,7 @@ def update_project(
     project_id: int,
     req: ProjectUpdate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("sync:write")),
 ):
     p = db.query(Project).filter(Project.id == project_id).first()
     if not p:
@@ -173,7 +174,7 @@ def delete_project(
     project_id: int,
     move_to: Optional[int] = Query(None, description="将原任务迁到的目标项目 id，不传则置 NULL（落入未分组）"),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("sync:write")),
 ):
     p = db.query(Project).filter(Project.id == project_id).first()
     if not p:

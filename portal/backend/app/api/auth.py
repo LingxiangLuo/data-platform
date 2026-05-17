@@ -89,7 +89,8 @@ def get_my_permissions(
     db: Session = Depends(get_db),
 ):
     """返回当前用户的权限码列表"""
-    if getattr(current_user, "role", None) == "admin":
+    from app.core.permissions import _is_admin
+    if _is_admin(db, current_user):
         from app.models.role import SysPermission
         perms = db.query(SysPermission).all()
         return {"permissions": [p.code for p in perms]}

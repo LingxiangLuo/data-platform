@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.permissions import require_permission
 from app.core.notifier import notify, send_feishu_webhook, send_dingtalk_webhook, send_wecom_webhook, send_email, test_channel
 from app.models.alert_rule import AlertRule
 from app.models.workflow import Workflow
@@ -97,7 +98,7 @@ def list_rules(
 def create_rule(
     req: AlertRuleCreate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("monitor:write")),
 ):
     r = AlertRule(
         name=req.name,
@@ -122,7 +123,7 @@ def update_rule(
     rule_id: int,
     req: AlertRuleUpdate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("monitor:write")),
 ):
     r = db.query(AlertRule).filter(AlertRule.id == rule_id).first()
     if not r:
@@ -139,7 +140,7 @@ def update_rule(
 def delete_rule(
     rule_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("monitor:write")),
 ):
     r = db.query(AlertRule).filter(AlertRule.id == rule_id).first()
     if not r:
@@ -153,7 +154,7 @@ def delete_rule(
 def toggle_rule(
     rule_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("monitor:write")),
 ):
     r = db.query(AlertRule).filter(AlertRule.id == rule_id).first()
     if not r:

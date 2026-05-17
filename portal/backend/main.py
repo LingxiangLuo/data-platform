@@ -207,6 +207,24 @@ def _migrate_sys_user_columns():
 _migrate_sys_user_columns()
 
 
+def _migrate_sys_user_oauth_unique():
+    """为 sys_user 的 (oauth_provider, oauth_openid) 添加唯一索引（防竞态）"""
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT INDEX_NAME FROM information_schema.STATISTICS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_user' "
+            "AND INDEX_NAME = 'uk_oauth'"
+        )).fetchall()
+        if not rows:
+            conn.execute(text(
+                "ALTER TABLE sys_user ADD UNIQUE KEY uk_oauth (oauth_provider, oauth_openid)"
+            ))
+            conn.commit()
+
+
+_migrate_sys_user_oauth_unique()
+
+
 def _migrate_sys_notify_channel_table():
     """按需创建 sys_notify_channel 表"""
     with engine.connect() as conn:
@@ -254,21 +272,24 @@ _migrate_alert_rule_channel_ids()
 # ─── 种子数据：4 个内置角色 + 权限列表 ──────────────────────────────────────
 
 _BUILTIN_PERMISSIONS = [
-    ("user:manage",     "用户管理",     "user",       "manage"),
-    ("role:manage",     "角色管理",     "role",       "manage"),
-    ("system:config",   "系统配置",     "system",     "config"),
-    ("datasource:read", "数据源查看",   "datasource", "read"),
-    ("datasource:write","数据源编辑",   "datasource", "write"),
-    ("component:read",  "组件查看",     "component",  "read"),
-    ("component:create","组件创建",     "component",  "create"),
-    ("component:write", "组件编辑",     "component",  "write"),
-    ("workflow:read",   "工作流查看",   "workflow",   "read"),
-    ("workflow:create", "工作流创建",   "workflow",   "create"),
-    ("workflow:write",  "工作流编辑",   "workflow",   "write"),
-    ("sync:read",       "数据同步查看", "sync",       "read"),
-    ("sync:write",      "数据同步编辑", "sync",       "write"),
-    ("metadata:read",   "数据资产查看", "metadata",   "read"),
-    ("monitor:read",    "系统监控查看", "monitor",    "read"),
+    ("user:manage",       "用户管理",       "user",       "manage"),
+    ("role:manage",       "角色管理",       "role",       "manage"),
+    ("system:config",     "系统配置",       "system",     "config"),
+    ("datasource:read",   "数据源查看",     "datasource", "read"),
+    ("datasource:write",  "数据源编辑",     "datasource", "write"),
+    ("component:read",    "组件查看",       "component",  "read"),
+    ("component:create",  "组件创建",       "component",  "create"),
+    ("component:write",   "组件编辑",       "component",  "write"),
+    ("component:publish", "组件发布/下线",  "component",  "publish"),
+    ("workflow:read",     "工作流查看",     "workflow",   "read"),
+    ("workflow:create",   "工作流创建",     "workflow",   "create"),
+    ("workflow:write",    "工作流编辑",     "workflow",   "write"),
+    ("workflow:publish",  "工作流发布/下线","workflow",   "publish"),
+    ("sync:read",         "数据同步查看",   "sync",       "read"),
+    ("sync:write",        "数据同步编辑",   "sync",       "write"),
+    ("metadata:read",     "数据资产查看",   "metadata",   "read"),
+    ("monitor:read",      "系统监控查看",   "monitor",    "read"),
+    ("monitor:write",     "监控规则编辑",   "monitor",    "write"),
 ]
 
 _BUILTIN_ROLES = {
@@ -282,10 +303,10 @@ _BUILTIN_ROLES = {
         "description": "可管理数据源、组件、工作流、数据同步",
         "permissions": [
             "datasource:read", "datasource:write",
-            "component:read", "component:create", "component:write",
-            "workflow:read", "workflow:create", "workflow:write",
+            "component:read", "component:create", "component:write", "component:publish",
+            "workflow:read", "workflow:create", "workflow:write", "workflow:publish",
             "sync:read", "sync:write",
-            "metadata:read", "monitor:read",
+            "metadata:read", "monitor:read", "monitor:write",
         ],
     },
     "analyst": {
@@ -339,17 +360,14 @@ def _seed_roles_and_permissions():
 _seed_roles_and_permissions()
 
 
-# 确保管理员密码正确
+# 确保管理员账号存在并关联 RBAC admin 角色
 def _ensure_admin():
     from app.models.user import SysUser
+    from app.models.role import SysRole, SysUserRole
     db = SessionLocal()
     try:
         admin = db.query(SysUser).filter(SysUser.username == "admin").first()
-        if admin:
-            # 更新密码为正确的 bcrypt hash
-            admin.password = hash_password("admin123")
-            db.commit()
-        else:
+        if not admin:
             admin = SysUser(
                 username="admin",
                 password=hash_password("admin123"),
@@ -358,7 +376,19 @@ def _ensure_admin():
                 status=1,
             )
             db.add(admin)
-            db.commit()
+            db.flush()
+
+        # 确保 admin 用户关联了 RBAC admin 角色
+        admin_role = db.query(SysRole).filter(SysRole.code == "admin").first()
+        if admin_role:
+            exists = db.query(SysUserRole).filter(
+                SysUserRole.user_id == admin.id,
+                SysUserRole.role_id == admin_role.id,
+            ).first()
+            if not exists:
+                db.add(SysUserRole(user_id=admin.id, role_id=admin_role.id))
+
+        db.commit()
     finally:
         db.close()
 

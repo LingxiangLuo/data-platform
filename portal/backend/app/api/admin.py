@@ -345,6 +345,19 @@ def update_sso(
 
 # ─── System Config (SMTP / Notify) ──────────────────────────────────────────
 
+_SENSITIVE_FIELDS = {"password", "secret", "access_key", "secret_key", "token"}
+
+
+def _redact(value: dict) -> dict:
+    """脱敏：将敏感字段替换为占位符（非空时）"""
+    if not isinstance(value, dict):
+        return value
+    return {
+        k: "***" if k in _SENSITIVE_FIELDS and v else v
+        for k, v in value.items()
+    }
+
+
 @router.get("/config/{key}")
 def get_config(
     key: str,
@@ -355,7 +368,7 @@ def get_config(
     row = db.query(SysConfig).filter(SysConfig.key == key).first()
     if not row:
         return {"key": key, "value": None}
-    return {"key": row.key, "value": row.value, "description": row.description}
+    return {"key": row.key, "value": _redact(row.value), "description": row.description}
 
 
 @router.put("/config/{key}")
