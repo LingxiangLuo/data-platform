@@ -15,5 +15,10 @@ class SysUser(Base):
     phone = Column(String(20))
     role = Column(String(32), default="user")
     status = Column(Integer, default=1)
+    avatar = Column(String(512), nullable=True)
+    dept_id = Column(BigInteger, nullable=True)
+    last_login_at = Column(DateTime, nullable=True)
+    oauth_provider = Column(String(32), nullable=True)   # dingtalk / feishu / wecom
+    oauth_openid = Column(String(128), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

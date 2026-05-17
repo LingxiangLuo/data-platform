@@ -72,6 +72,22 @@
           </a-form-item>
         </a-form>
 
+        <!-- SSO 登录区 -->
+        <template v-if="enabledProviders.length > 0">
+          <a-divider style="margin: 16px 0; color: #C9CDD4; font-size: 12px;">或使用企业账号登录</a-divider>
+          <div class="sso-buttons">
+            <a-button
+              v-for="p in enabledProviders"
+              :key="p.provider"
+              class="sso-btn"
+              @click="ssoLogin(p.provider)"
+            >
+              <span class="sso-icon" :style="{ background: p.color }">{{ p.abbr }}</span>
+              {{ p.label }}登录
+            </a-button>
+          </div>
+        </template>
+
         <div class="login-footer">
           <span>默认账号: admin / admin123</span>
         </div>
@@ -86,11 +102,12 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import { IconUser, IconLock } from '@arco-design/web-vue/es/icon'
 import { useUserStore } from '../stores/user'
+import { adminGetSsoPublic } from '../api'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -101,6 +118,27 @@ const form = reactive({
   password: 'admin123',
   remember: true,
 })
+
+const _ALL_PROVIDERS = [
+  { provider: 'dingtalk', label: '钉钉', abbr: 'DD', color: '#1677FF' },
+  { provider: 'feishu',   label: '飞书', abbr: 'FS', color: '#3370FF' },
+  { provider: 'wecom',    label: '企微', abbr: 'WX', color: '#07C160' },
+]
+const enabledProviders = ref<typeof _ALL_PROVIDERS>([])
+
+async function loadSsoProviders() {
+  try {
+    const res: any = await adminGetSsoPublic()
+    const enabledSet = new Set((res || []).map((c: any) => c.provider))
+    enabledProviders.value = _ALL_PROVIDERS.filter(p => enabledSet.has(p.provider))
+  } catch {
+    enabledProviders.value = []
+  }
+}
+
+function ssoLogin(provider: string) {
+  window.location.href = `/api/auth/oauth/${provider}`
+}
 
 async function handleLogin() {
   loading.value = true
@@ -114,6 +152,8 @@ async function handleLogin() {
     loading.value = false
   }
 }
+
+onMounted(loadSsoProviders)
 </script>
 
 <style scoped>
@@ -232,6 +272,35 @@ async function handleLogin() {
   color: #C9CDD4;
   font-size: 12px;
   margin-top: 16px;
+}
+
+.sso-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sso-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  border-radius: 8px !important;
+  font-size: 13px;
+  color: #4E5969;
+}
+
+.sso-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .copyright {

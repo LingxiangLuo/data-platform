@@ -9,7 +9,7 @@ import DagToolbar from '../components/dag/DagToolbar.vue'
 import ScheduleModal from '../components/ScheduleModal.vue'
 import { getWorkflow, createWorkflow, updateWorkflow, testWorkflow, publishWorkflow, runWorkflow } from '../api'
 
-interface DagNode { id: string; component_id: number; name: string; position: { x: number; y: number }; skip: boolean }
+interface DagNode { id: string; component_id: number; type?: string; name: string; position: { x: number; y: number }; skip: boolean }
 interface DagEdge { id: string; source: string; target: string }
 
 const route = useRoute()
@@ -38,8 +38,13 @@ const cronHumanReadable = computed(() => {
   const p = parts.length === 6 ? parts.slice(1) : parts
   if (p.length < 5) return '自定义'
   const [min, hr, dom, , dow] = p
+  const everyDay  = (dom === '*' || dom === '?') && (dow === '*' || dow === '?')
+  const everyHour = hr === '*' || hr === '?'
+  const everyMin  = min === '*' || min === '?'
+  if (everyDay && everyHour && everyMin) return '每分钟'
+  if (everyDay && everyHour) return `每小时第 ${min} 分`
   const time = `${String(parseInt(hr)).padStart(2, '0')}:${String(parseInt(min)).padStart(2, '0')}`
-  if ((dom === '*' || dom === '?') && (dow === '*' || dow === '?')) {
+  if (everyDay) {
     return `每天 ${time}`
   }
   if ((dom === '?' || dom === '*') && dow !== '*' && dow !== '?') {
@@ -63,7 +68,13 @@ onMounted(async () => {
 
 async function loadWorkflow() {
   if (!workflowId.value) return
-  const res: any = await getWorkflow(workflowId.value)
+  let res: any
+  try {
+    res = await getWorkflow(workflowId.value)
+  } catch (e: any) {
+    Message.error(e?.response?.data?.detail || '加载工作流失败')
+    return
+  }
   workflowName.value = res.name
   workflowDesc.value = res.description || ''
   workflowStatus.value = res.status
@@ -76,7 +87,7 @@ async function loadWorkflow() {
     dagEdges.value = res.dag.edges || []
   } else if (res.steps && res.steps.length) {
     dagNodes.value = res.steps.map((s: any, i: number) => ({
-      id: `node-${i+1}`, component_id: s.component_id, name: s.name || s.component_name,
+      id: `node-${i+1}`, component_id: s.component_id, type: s.component_type || 'sql', name: s.name || s.component_name,
       position: { x: 200 + i * 220, y: 200 }, skip: false,
     }))
     dagEdges.value = res.steps.slice(1).map((s: any, i: number) => ({
@@ -90,8 +101,12 @@ function onDagUpdate(dag: { nodes: DagNode[]; edges: DagEdge[] }) {
   dagEdges.value = dag.edges
 }
 
-function onScheduleSave(cron: string) {
+async function onScheduleSave(cron: string) {
   cronExpression.value = cron
+  if (!workflowId.value) return
+  try {
+    await updateWorkflow(workflowId.value, { cron_expression: cron })
+  } catch {}
 }
 
 async function handleSave() {
@@ -126,7 +141,7 @@ async function handleTest() {
   if (!workflowId.value) { Message.warning('请先保存'); return }
   try {
     await testWorkflow(workflowId.value)
-    workflowStatus.value = 'tested'
+    await loadWorkflow()
     Message.success('测试通过')
   } catch (e: any) { Message.error(e?.response?.data?.detail || '测试失败') }
 }
@@ -135,7 +150,7 @@ async function handlePublish() {
   if (!workflowId.value) return
   try {
     await publishWorkflow(workflowId.value)
-    workflowStatus.value = 'online'
+    await loadWorkflow()
     Message.success('发布成功')
   } catch (e: any) { Message.error(e?.response?.data?.detail || '发布失败') }
 }
@@ -162,6 +177,7 @@ function handleAutoLayout() { dagCanvas.value?.autoLayout() }
     />
     <div class="workflow-editor__meta">
       <input v-model="workflowName" placeholder="工作流名称" class="workflow-editor__name-input" />
+      <input v-model="workflowDesc" placeholder="描述（可选）" class="workflow-editor__desc-input" />
       <select v-model="workflowPriority" class="workflow-editor__priority-select">
         <option :value="1">P1 高</option>
         <option :value="2">P2 中</option>
@@ -206,6 +222,7 @@ function handleAutoLayout() { dagCanvas.value?.autoLayout() }
 .workflow-editor { display: flex; flex-direction: column; height: 100vh; background: #f7f8fa; }
 .workflow-editor__meta { display: flex; gap: 12px; padding: 8px 16px; background: #fff; border-bottom: 1px solid #e5e7eb; align-items: center; }
 .workflow-editor__name-input { flex: 1; max-width: 300px; padding: 6px 10px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 14px; }
+.workflow-editor__desc-input { flex: 1; max-width: 240px; padding: 6px 10px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 13px; color: #666; }
 .workflow-editor__priority-select { width: 80px; padding: 6px 8px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 13px; color: #333; background: #fff; cursor: pointer; }
 
 .schedule-trigger {
