@@ -2,8 +2,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install
+# 单独复制 lock 文件，利用 Docker layer 缓存——只有依赖变化才重装
+COPY package.json package-lock.json ./
+RUN npm ci --prefer-offline
 
 COPY . .
 RUN npm run build || npx vite build
