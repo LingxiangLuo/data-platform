@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     DS_ADMIN_USER: str = "admin"
     DS_ADMIN_PASSWORD: str = "changeme"
     OM_API_URL: str = "http://localhost:8585"
+    CORS_ORIGINS: list[str] = ["*"]
+    REDIS_URL: str = "redis://localhost:6379/0"
+    LOGIN_MAX_ATTEMPTS: int = 5
+    LOGIN_LOCKOUT_SECONDS: int = 300
+    ADMIN_INIT_PASSWORD: str = "admin123"
 
     class Config:
         env_file = ".env"
