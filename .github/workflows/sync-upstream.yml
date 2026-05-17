@@ -47,8 +47,17 @@ jobs:
             git push origin dev
             echo "✅ dev synced with upstream"
           else
-            echo "⚠️ Merge conflict — resolve manually"
-            git diff --name-only --diff-filter=U
-            git merge --abort
-            exit 1
+            # 对 .github/workflows/ 冲突直接保留 dev 版本
+            if git diff --name-only --diff-filter=U | grep -qv '.github/workflows/'; then
+              echo "⚠️ Non-workflow merge conflict — resolve manually"
+              git diff --name-only --diff-filter=U
+              git merge --abort
+              exit 1
+            fi
+            # 只有 workflows 冲突：保留 dev 版本后继续
+            git checkout --ours .github/workflows/
+            git add .github/workflows/
+            git commit --no-edit -m "ci: merge origin/main into dev, keep dev workflows"
+            git push origin dev
+            echo "✅ dev synced (workflow conflicts auto-resolved)"
           fi
