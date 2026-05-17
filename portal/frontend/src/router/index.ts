@@ -38,7 +38,7 @@ const router = createRouter({
           path: 'sql-dev',
           name: 'SqlDev',
           component: () => import('../views/SqlDev.vue'),
-          meta: { title: '代码开发' },
+          meta: { title: '组件开发' },
         },
         {
           path: 'workflows/:id/edit',

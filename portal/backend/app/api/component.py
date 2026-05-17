@@ -362,7 +362,7 @@ def delete_folder(
 def run_sql_adhoc(
     req: RunSqlRequest,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:write")),
 ):
     """临时 SQL 执行，结果直接返回"""
     return _run_sql(db, req.datasource_id, req.sql)
@@ -436,7 +436,7 @@ def run_component(
     comp_id: int,
     datasource_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:write")),
 ):
     """运行组件：SQL 直连执行返回结果，Python/Shell 用 subprocess 执行返回日志"""
     c = _get_or_404(db, comp_id)

@@ -23,10 +23,10 @@
             <span class="caret">{{ grpCollapsed[grp.type] ? "▸" : "▾" }}</span>
             <span class="grp-label">{{ grp.label }}</span>
             <span class="grp-count">{{ compCountByType(grp.type) }}</span>
-            <a-tooltip content="新建文件夹">
+            <a-tooltip v-if="userStore.hasPermission('component:write')" content="新建文件夹">
               <span class="grp-action" @click.stop="startNewFolder(grp.type, null)">⊞</span>
             </a-tooltip>
-            <a-tooltip content="新建组件">
+            <a-tooltip v-if="userStore.hasPermission('component:write')" content="新建组件">
               <span class="grp-action" @click.stop="newBlankTab(grp.type as Language)">＋</span>
             </a-tooltip>
           </div>
@@ -69,13 +69,13 @@
                   ref="renameInputRef"
                 />
                 <span class="node-actions">
-                  <a-tooltip v-if="node.depth < 3" content="新建子文件夹">
+                  <a-tooltip v-if="userStore.hasPermission('component:write') && node.depth < 3" content="新建子文件夹">
                     <span class="node-action" @click.stop="startNewFolder(node.folderType, node.id)">⊞</span>
                   </a-tooltip>
-                  <a-tooltip content="新建组件">
+                  <a-tooltip v-if="userStore.hasPermission('component:write')" content="新建组件">
                     <span class="node-action" @click.stop="newBlankTab(node.folderType as Language, node.id)">＋</span>
                   </a-tooltip>
-                  <a-tooltip content="删除文件夹">
+                  <a-tooltip v-if="userStore.hasPermission('component:write')" content="删除文件夹">
                     <span class="node-action danger" @click.stop="deleteFolder(node.id)">×</span>
                   </a-tooltip>
                 </span>
@@ -198,15 +198,15 @@
             </a-select>
             <div style="flex:1" />
             <a-space size="small">
-              <a-button size="small" type="primary" :loading="running" @click="runCode">
+              <a-button v-if="userStore.hasPermission('component:write')" size="small" type="primary" :loading="running" @click="runCode">
                 <template #icon><icon-play-arrow /></template>
                 运行
               </a-button>
-              <a-button size="small" :loading="saving" @click="saveTab">
+              <a-button v-if="userStore.hasPermission('component:write')" size="small" :loading="saving" @click="saveTab">
                 <template #icon><icon-save /></template>
                 保存
               </a-button>
-              <a-button v-if="activeTab.componentId" size="small" @click="quickPublish">
+              <a-button v-if="activeTab.componentId && userStore.hasPermission('component:publish')" size="small" @click="quickPublish">
                 <template #icon><icon-upload /></template>
                 发布
               </a-button>
@@ -321,6 +321,9 @@ import {
 } from '../api'
 import SyncTaskCanvas from '../components/SyncTaskCanvas.vue'
 import SyncTaskWizard from '../components/SyncTaskWizard.vue'
+import { useUserStore } from '../stores/user'
+
+const userStore = useUserStore()
 
 type Language = 'sql' | 'python' | 'shell' | 'datax'
 
