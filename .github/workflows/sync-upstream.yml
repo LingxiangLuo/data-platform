@@ -1,0 +1,34 @@
+name: Sync Upstream and Merge to Dev
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync main from upstream
+        run: |
+          git remote add upstream https://github.com/barryLiu199/data-platform-mvp.git
+          git fetch upstream main
+          git checkout -B main upstream/main
+          git push origin main --force-with-lease
+
+      - name: Merge main into dev
+        run: |
+          git checkout dev
+          git merge main --no-edit
+          git push origin dev
+        continue-on-error: true
