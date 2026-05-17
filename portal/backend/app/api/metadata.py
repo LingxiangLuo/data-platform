@@ -395,10 +395,11 @@ def _generate_ddl_sql(db_type: str, table: str, columns: List[DDLColumn]) -> str
         null_part = "NULL" if c.nullable else "NOT NULL"
         comment_part = ""
         if c.comment:
+            safe_comment = c.comment.replace("'", "''")  # 转义单引号防 SQL 注入
             if t == "oracle":
                 comment_part = ""  # Oracle comment 单独加
             else:
-                comment_part = f" COMMENT '{c.comment}'"
+                comment_part = f" COMMENT '{safe_comment}'"
         lines.append(f"  {_quote(c.name)} {ctype} {null_part}{comment_part}")
         if c.primary_key:
             pk_cols.append(_quote(c.name))
@@ -420,7 +421,7 @@ def _generate_ddl_sql(db_type: str, table: str, columns: List[DDLColumn]) -> str
         ddl = f"CREATE TABLE {table} (\n" + ",\n".join(lines) + "\n);"
         # Oracle comment 单独执行
         comments = [
-            f"COMMENT ON COLUMN {table}.{_quote(c.name)} IS '{c.comment}'"
+            f"COMMENT ON COLUMN {table}.{_quote(c.name)} IS '{c.comment.replace(chr(39), chr(39)+chr(39))}'"
             for c in columns if c.comment
         ]
         if comments:

@@ -288,6 +288,7 @@ _BUILTIN_PERMISSIONS = [
     ("sync:read",         "数据同步查看",   "sync",       "read"),
     ("sync:write",        "数据同步编辑",   "sync",       "write"),
     ("metadata:read",     "数据资产查看",   "metadata",   "read"),
+    ("metadata:write",    "数据资产编辑",   "metadata",   "write"),
     ("monitor:read",      "系统监控查看",   "monitor",    "read"),
     ("monitor:write",     "监控规则编辑",   "monitor",    "write"),
 ]
@@ -306,7 +307,7 @@ _BUILTIN_ROLES = {
             "component:read", "component:create", "component:write", "component:publish",
             "workflow:read", "workflow:create", "workflow:write", "workflow:publish",
             "sync:read", "sync:write",
-            "metadata:read", "monitor:read", "monitor:write",
+            "metadata:read", "metadata:write", "monitor:read", "monitor:write",
         ],
     },
     "analyst": {
@@ -387,6 +388,12 @@ def _ensure_admin():
             ).first()
             if not exists:
                 db.add(SysUserRole(user_id=admin.id, role_id=admin_role.id))
+
+        # 保持 legacy role 字段与 RBAC 一致
+        if admin.role != "admin":
+            admin.role = "admin"
+        if admin.status != 1:
+            admin.status = 1
 
         db.commit()
     finally:
