@@ -9,6 +9,7 @@ from sqlalchemy import or_
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.permissions import require_permission
 from app.models.word_root import WordRoot
 from app.models.user import SysUser
 
@@ -71,7 +72,7 @@ def list_word_roots(
 def create_word_root(
     req: WordRootCreate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("metadata:write")),
 ):
     existing = db.query(WordRoot).filter(WordRoot.en == req.en.strip().lower()).first()
     if existing:
@@ -94,7 +95,7 @@ def update_word_root(
     root_id: int,
     req: WordRootUpdate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("metadata:write")),
 ):
     r = db.query(WordRoot).filter(WordRoot.id == root_id).first()
     if not r:
@@ -113,7 +114,7 @@ def update_word_root(
 def delete_word_root(
     root_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("metadata:write")),
 ):
     r = db.query(WordRoot).filter(WordRoot.id == root_id).first()
     if not r:
@@ -127,7 +128,7 @@ def delete_word_root(
 async def import_word_roots(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("metadata:write")),
 ):
     """Excel 批量导入词根（xlsx 格式，列：英文词根/中文名/分类/说明/示例）"""
     if not file.filename.endswith(('.xlsx', '.xls')):

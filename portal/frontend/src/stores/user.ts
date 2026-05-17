@@ -1,34 +1,53 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { login as loginApi, getMe } from '../api'
+import { ref, computed } from 'vue'
+import { login as loginApi, logout as logoutApi, getMe, getMyPermissions } from '../api'
 
 export const useUserStore = defineStore('user', () => {
-  const token = ref(localStorage.getItem('token') || '')
   const userInfo = ref<any>(null)
+  const permissions = ref<string[]>([])
+
+  const isLoggedIn = computed(() => !!userInfo.value)
+  const isAdmin = computed(() =>
+    userInfo.value?.role === 'admin' || permissions.value.includes('user:manage')
+  )
+
+  function hasPermission(code: string): boolean {
+    if (userInfo.value?.role === 'admin') return true
+    return permissions.value.includes(code)
+  }
 
   async function login(username: string, password: string) {
     const res: any = await loginApi({ username, password })
-    token.value = res.access_token
     userInfo.value = res.user
-    localStorage.setItem('token', res.access_token)
+    await _fetchPermissions()
     return res
   }
 
   async function fetchUser() {
-    if (!token.value) return
     try {
       const res: any = await getMe()
       userInfo.value = res
+      await _fetchPermissions()
     } catch {
-      logout()
+      userInfo.value = null
+      permissions.value = []
     }
   }
 
-  function logout() {
-    token.value = ''
-    userInfo.value = null
-    localStorage.removeItem('token')
+  async function _fetchPermissions() {
+    try {
+      const res: any = await getMyPermissions()
+      permissions.value = res.permissions || []
+    } catch {
+      permissions.value = []
+    }
   }
 
-  return { token, userInfo, login, fetchUser, logout }
+  async function logout() {
+    try { await logoutApi() } catch {}
+    userInfo.value = null
+    permissions.value = []
+  }
+
+  return { userInfo, permissions, isLoggedIn, isAdmin, hasPermission, login, fetchUser, logout }
 })

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.permissions import get_accessible_ids, check_resource_permission, require_permission
 from app.models.datasource import DataSource
 from app.models.user import SysUser
 
@@ -60,6 +61,12 @@ def list_datasources(
     query = db.query(DataSource)
     if keyword:
         query = query.filter(DataSource.name.contains(keyword))
+
+    # 资源级 ACL 过滤
+    accessible = get_accessible_ids(db, current_user, "datasource", "read")
+    if accessible is not None:
+        query = query.filter(DataSource.id.in_(accessible)) if accessible else query.filter(False)
+
     total = query.count()
     items = query.order_by(DataSource.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return {"total": total, "items": [_serialize(ds) for ds in items]}
@@ -69,10 +76,23 @@ def list_datasources(
 def create_datasource(
     req: DataSourceCreate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("datasource:write")),
 ):
     ds = DataSource(**req.model_dump(), created_by=current_user.id)
     db.add(ds)
+    db.flush()  # 获取 ds.id
+
+    # 自动授予创建者 admin 权限
+    from app.models.resource_access import SysResourceAccess
+    db.add(SysResourceAccess(
+        resource_type="datasource",
+        resource_id=ds.id,
+        subject_type="user",
+        subject_id=current_user.id,
+        permission="admin",
+        granted_by=current_user.id,
+    ))
+
     db.commit()
     db.refresh(ds)
     return _serialize(ds)
@@ -87,6 +107,8 @@ def get_datasource(
     ds = db.query(DataSource).filter(DataSource.id == ds_id).first()
     if not ds:
         raise HTTPException(status_code=404, detail="数据源不存在")
+    if not check_resource_permission(db, current_user, "datasource", ds_id, "read"):
+        raise HTTPException(status_code=404, detail="数据源不存在")
     return _serialize(ds)
 
 
@@ -95,10 +117,12 @@ def update_datasource(
     ds_id: int,
     req: DataSourceUpdate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("datasource:write")),
 ):
     ds = db.query(DataSource).filter(DataSource.id == ds_id).first()
     if not ds:
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    if not check_resource_permission(db, current_user, "datasource", ds_id, "write"):
         raise HTTPException(status_code=404, detail="数据源不存在")
     for key, value in req.model_dump(exclude_unset=True).items():
         setattr(ds, key, value)
@@ -111,11 +135,19 @@ def update_datasource(
 def delete_datasource(
     ds_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("datasource:write")),
 ):
     ds = db.query(DataSource).filter(DataSource.id == ds_id).first()
     if not ds:
         raise HTTPException(status_code=404, detail="数据源不存在")
+    if not check_resource_permission(db, current_user, "datasource", ds_id, "admin"):
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    # 清理 ACL 记录
+    from app.models.resource_access import SysResourceAccess
+    db.query(SysResourceAccess).filter(
+        SysResourceAccess.resource_type == "datasource",
+        SysResourceAccess.resource_id == ds_id,
+    ).delete()
     db.delete(ds)
     db.commit()
     return {"message": "删除成功"}
@@ -129,6 +161,8 @@ def test_connection(
 ):
     ds = db.query(DataSource).filter(DataSource.id == ds_id).first()
     if not ds:
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    if not check_resource_permission(db, current_user, "datasource", ds_id, "read"):
         raise HTTPException(status_code=404, detail="数据源不存在")
 
     from app.core.db_adapter import test_connection as adapter_test

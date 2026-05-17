@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.permissions import get_accessible_ids, check_resource_permission, require_permission
 from app.core.ds_client import get_ds_client
 from app.core.dsl_translator import translate_workflow, translate_workflow_dag
 from app.models.workflow import Workflow
@@ -104,13 +105,26 @@ def _serialize(w: Workflow, db: Session) -> dict:
             next_fire_time = str(cron.get_next(datetime))
         except Exception:
             pass
+    # 把 component type 补进 dag 节点，前端渲染节点颜色/样式依赖此字段
+    dag = w.dag_json
+    if dag and dag.get("nodes"):
+        dag_comp_ids = [n.get("component_id") for n in dag["nodes"] if n.get("component_id")]
+        if dag_comp_ids:
+            dag_comps = {c.id: c for c in db.query(Component).filter(Component.id.in_(dag_comp_ids)).all()}
+        else:
+            dag_comps = {}
+        enriched_nodes = [
+            {**n, "type": dag_comps[n["component_id"]].type if n.get("component_id") in dag_comps else n.get("type", "sql")}
+            for n in dag["nodes"]
+        ]
+        dag = {**dag, "nodes": enriched_nodes}
     return {
         "id": w.id,
         "name": w.name,
         "description": w.description,
         "tags": w.tags or [],
         "steps": enriched_steps,
-        "dag": w.dag_json,
+        "dag": dag,
         "cron_expression": w.cron_expression,
         "schedule_status": w.schedule_status,
         "status": w.status,
@@ -330,7 +344,18 @@ def list_workflows(
     if status:
         q = q.filter(Workflow.status == status)
     if tag:
+        # 先用 contains 粗筛，再在应用层精确匹配，避免 "日报" 误匹配 "日报表"
         q = q.filter(Workflow.tags.contains(f'"{tag}"'))
+    if tag:
+        # 应用层精确过滤（JSON contains 可能误匹配子串）
+        candidate_ids = [w.id for w in q.with_entities(Workflow.id, Workflow.tags).all() if tag in (w.tags or [])]
+        q = db.query(Workflow).filter(Workflow.id.in_(candidate_ids)) if candidate_ids else q.filter(False)
+
+    # 资源级 ACL 过滤
+    accessible = get_accessible_ids(db, current_user, "workflow", "read")
+    if accessible is not None:
+        q = q.filter(Workflow.id.in_(accessible)) if accessible else q.filter(False)
+
     total = q.count()
     items = q.order_by(Workflow.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     # 收集所有已使用的标签
@@ -345,7 +370,7 @@ def list_workflows(
 def create_workflow(
     req: WorkflowCreate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:create")),
 ):
     steps_data = _validate_steps(db, req.steps)
     dag_data = None
@@ -367,6 +392,19 @@ def create_workflow(
         created_by=current_user.id,
     )
     db.add(w)
+    db.flush()  # 获取 w.id
+
+    # 自动授予创建者 admin 权限
+    from app.models.resource_access import SysResourceAccess
+    db.add(SysResourceAccess(
+        resource_type="workflow",
+        resource_id=w.id,
+        subject_type="user",
+        subject_id=current_user.id,
+        permission="admin",
+        granted_by=current_user.id,
+    ))
+
     db.commit()
     db.refresh(w)
     return _serialize(w, db)
@@ -382,6 +420,12 @@ def list_scheduled_workflows(
         Workflow.cron_expression.isnot(None),
         Workflow.cron_expression != "",
     ).order_by(Workflow.id.desc())
+
+    # 资源级 ACL 过滤（与 list_workflows 保持一致）
+    accessible = get_accessible_ids(db, current_user, "workflow", "read")
+    if accessible is not None:
+        q = q.filter(Workflow.id.in_(accessible)) if accessible else q.filter(False)
+
     items = q.all()
     result = []
     for w in items:
@@ -403,7 +447,10 @@ def get_workflow(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    return _serialize(_get_or_404(db, wf_id), db)
+    w = _get_or_404(db, wf_id)
+    if not check_resource_permission(db, current_user, "workflow", wf_id, "read"):
+        raise HTTPException(status_code=404, detail="工作流不存在")
+    return _serialize(w, db)
 
 
 @router.put("/{wf_id}")
@@ -411,9 +458,11 @@ def update_workflow(
     wf_id: int,
     req: WorkflowUpdate,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:write")),
 ):
     w = _get_or_404(db, wf_id)
+    if not check_resource_permission(db, current_user, "workflow", wf_id, "write"):
+        raise HTTPException(status_code=404, detail="工作流不存在")
     if w.status not in EDITABLE_STATUSES:
         raise HTTPException(
             status_code=400,
@@ -438,6 +487,13 @@ def update_workflow(
     if "dag" in updates and updates["dag"]:
         dag_raw = updates["dag"]
         dag_data = {"nodes": dag_raw.get("nodes", []), "edges": dag_raw.get("edges", [])}
+        # 校验所有非 skip 节点的 component_id 存在且有效
+        comp_ids = [n["component_id"] for n in dag_data["nodes"] if not n.get("skip")]
+        if comp_ids:
+            found = {c.id for c in db.query(Component.id).filter(Component.id.in_(comp_ids)).all()}
+            missing = [cid for cid in comp_ids if cid not in found]
+            if missing:
+                raise HTTPException(status_code=400, detail=f"以下组件不存在: {missing}")
         w.dag_json = dag_data
         # 同步 steps_json
         w.steps_json = [{"component_id": n["component_id"], "name": n.get("name")} for n in dag_data["nodes"] if not n.get("skip")]
@@ -454,9 +510,11 @@ def update_workflow(
 async def delete_workflow(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:write")),
 ):
     w = _get_or_404(db, wf_id)
+    if not check_resource_permission(db, current_user, "workflow", wf_id, "admin"):
+        raise HTTPException(status_code=404, detail="工作流不存在")
     if w.status not in DELETABLE_STATUSES:
         raise HTTPException(
             status_code=400,
@@ -477,6 +535,12 @@ async def delete_workflow(
             await ds.delete_process_definition(w.ds_process_code)
         except Exception:
             pass
+    # 清理 ACL 记录，避免孤儿行影响 has_any 判断
+    from app.models.resource_access import SysResourceAccess
+    db.query(SysResourceAccess).filter(
+        SysResourceAccess.resource_type == "workflow",
+        SysResourceAccess.resource_id == wf_id,
+    ).delete()
     db.delete(w)
     db.commit()
     return {"message": "删除成功"}
@@ -487,10 +551,12 @@ async def delete_workflow(
 def test_workflow(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:write")),
 ):
     """测试工作流 — 检查所有 component 都已发布"""
     w = _get_or_404(db, wf_id)
+    if not check_resource_permission(db, current_user, "workflow", wf_id, "write"):
+        raise HTTPException(status_code=404, detail="工作流不存在")
     if w.status not in {STATUS_DRAFT, STATUS_TESTED}:
         raise HTTPException(status_code=400, detail=f"状态 {w.status} 下不允许测试")
     # 从 DAG 或 steps 提取 component_id
@@ -526,10 +592,12 @@ def test_workflow(
 async def publish_workflow(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:publish")),
 ):
     """发布工作流 — tested 才能发布,真正同步到 DS"""
     w = _get_or_404(db, wf_id)
+    if not check_resource_permission(db, current_user, "workflow", wf_id, "write"):
+        raise HTTPException(status_code=404, detail="工作流不存在")
     if w.status != STATUS_TESTED:
         raise HTTPException(
             status_code=400,
@@ -548,9 +616,11 @@ async def publish_workflow(
 async def offline_workflow(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:publish")),
 ):
     w = _get_or_404(db, wf_id)
+    if not check_resource_permission(db, current_user, "workflow", wf_id, "write"):
+        raise HTTPException(status_code=404, detail="工作流不存在")
     if w.status != STATUS_ONLINE:
         raise HTTPException(status_code=400, detail=f"只有 online 状态可下线,当前 {w.status}")
     # 同步下线 DS 调度 + process definition
@@ -577,10 +647,12 @@ async def offline_workflow(
 async def run_workflow(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:write")),
 ):
     """手动运行工作流 — 通过 DS 触发"""
     w = _get_or_404(db, wf_id)
+    if not check_resource_permission(db, current_user, "workflow", wf_id, "write"):
+        raise HTTPException(status_code=404, detail="工作流不存在")
     if w.status not in {STATUS_ONLINE, STATUS_TESTED}:
         raise HTTPException(status_code=400, detail=f"状态 {w.status} 下不允许运行,需先测试/发布")
     if not w.ds_process_code:
@@ -602,9 +674,11 @@ async def run_workflow(
 async def schedule_online(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:publish")),
 ):
     w = _get_or_404(db, wf_id)
+    if not check_resource_permission(db, current_user, "workflow", wf_id, "write"):
+        raise HTTPException(status_code=404, detail="工作流不存在")
     if w.status != STATUS_ONLINE:
         raise HTTPException(status_code=400, detail="工作流需先发布上线才能开启调度")
     if not w.cron_expression:
@@ -632,9 +706,11 @@ async def schedule_online(
 async def schedule_offline(
     wf_id: int,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:publish")),
 ):
     w = _get_or_404(db, wf_id)
+    if not check_resource_permission(db, current_user, "workflow", wf_id, "write"):
+        raise HTTPException(status_code=404, detail="工作流不存在")
     if w.ds_schedule_id:
         try:
             ds = get_ds_client()
@@ -665,28 +741,3 @@ async def cron_preview(body: dict):
     except Exception:
         return {"times": [], "error": "无效的 CRON 表达式"}
     return {"times": times}
-
-
-def list_scheduled_workflows(
-    db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
-):
-    """返回所有配置了 cron 的工作流（调度任务页面用）"""
-    q = db.query(Workflow).filter(
-        Workflow.cron_expression.isnot(None),
-        Workflow.cron_expression != "",
-    ).order_by(Workflow.id.desc())
-    items = q.all()
-    result = []
-    for w in items:
-        item = _serialize(w, db)
-        # 计算下次执行时间
-        try:
-            from croniter import croniter
-            from datetime import datetime
-            cron = croniter(w.cron_expression, datetime.now())
-            item["next_fire_time"] = str(cron.get_next(datetime))
-        except Exception:
-            item["next_fire_time"] = None
-        result.append(item)
-    return {"items": result, "total": len(result)}

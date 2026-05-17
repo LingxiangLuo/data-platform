@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.ds_client import get_ds_client, DSClient
 from app.core.security import get_current_user
+from app.core.permissions import require_permission
 from app.models.user import SysUser
 from app.models.workflow import Workflow
 
@@ -163,7 +164,7 @@ async def list_workflows(
 
 
 @router.post("/workflows/{code}/run")
-async def run_workflow(code: int, current_user: SysUser = Depends(get_current_user)):
+async def run_workflow(code: int, current_user: SysUser = Depends(require_permission("workflow:write"))):
     """手动触发一次工作流执行"""
     ds = _ds()
     pc = await _project_code(ds)
@@ -180,7 +181,7 @@ async def run_workflow(code: int, current_user: SysUser = Depends(get_current_us
 
 
 @router.post("/workflows/{code}/online")
-async def online_schedule(code: int, current_user: SysUser = Depends(get_current_user)):
+async def online_schedule(code: int, current_user: SysUser = Depends(require_permission("workflow:publish"))):
     """上线工作流调度"""
     ds = _ds()
     pc = await _project_code(ds)
@@ -202,7 +203,7 @@ async def online_schedule(code: int, current_user: SysUser = Depends(get_current
 
 
 @router.post("/workflows/{code}/offline")
-async def offline_schedule(code: int, current_user: SysUser = Depends(get_current_user)):
+async def offline_schedule(code: int, current_user: SysUser = Depends(require_permission("workflow:publish"))):
     """下线工作流调度"""
     ds = _ds()
     pc = await _project_code(ds)
@@ -223,7 +224,7 @@ async def offline_schedule(code: int, current_user: SysUser = Depends(get_curren
 
 
 @router.post("/workflows/{code}/rerun")
-async def rerun_workflow(code: int, current_user: SysUser = Depends(get_current_user)):
+async def rerun_workflow(code: int, current_user: SysUser = Depends(require_permission("workflow:write"))):
     """重跑最近一次失败的工作流实例"""
     ds = _ds()
     pc = await _project_code(ds)
@@ -253,7 +254,7 @@ async def complement_workflow(
     code: int,
     start_date: str,
     end_date: str,
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:write")),
 ):
     """补数：批量执行指定日期范围"""
     ds = _ds()
@@ -438,7 +439,7 @@ async def get_task_log(
 @router.post("/instances/{instance_id}/rerun")
 async def rerun_instance(
     instance_id: int,
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("workflow:write")),
 ):
     """重跑指定实例"""
     ds = _ds()
