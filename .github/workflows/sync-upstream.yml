@@ -1,4 +1,4 @@
-name: Sync Upstream and Merge to Dev
+name: Sync Upstream
 
 on:
   schedule:
@@ -27,12 +27,12 @@ jobs:
           git checkout main
           git reset --hard upstream/main
 
-          # 把 CI 文件自身保留回来（upstream 没有这个文件，reset 后会丢失）
-          git checkout origin/main -- .github/workflows/sync-upstream.yml 2>/dev/null || true
+          # 上游没有 .github/workflows/，reset 后把 CI 文件从 origin/main 恢复回来
+          git fetch origin main
+          git checkout origin/main -- .github/workflows/ 2>/dev/null || true
 
-          # 只在有变化时提交
           if ! git diff --quiet HEAD; then
-            git commit -m "ci: restore sync workflow after upstream reset"
+            git commit -m "ci: restore workflows after upstream sync"
           fi
 
           git push origin main --force
@@ -45,9 +45,9 @@ jobs:
 
           if git merge main --no-edit; then
             git push origin dev
-            echo "✅ dev merged with main successfully"
+            echo "✅ dev synced with upstream"
           else
-            echo "⚠️ Merge conflict — resolve manually then merge main into dev"
+            echo "⚠️ Merge conflict — resolve manually"
             git diff --name-only --diff-filter=U
             git merge --abort
             exit 1
