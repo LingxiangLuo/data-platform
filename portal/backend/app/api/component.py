@@ -231,7 +231,7 @@ def list_components(
     if status:
         q = q.filter(Component.status == status)
     total = q.count()
-    items = q.order_by(Component.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = q.order_by(Component.sort_order.asc(), Component.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return {"total": total, "items": [_serialize(c) for c in items]}
 
 
@@ -362,7 +362,7 @@ def delete_folder(
 def run_sql_adhoc(
     req: RunSqlRequest,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:write")),
 ):
     """临时 SQL 执行，结果直接返回"""
     return _run_sql(db, req.datasource_id, req.sql)
@@ -436,7 +436,7 @@ def run_component(
     comp_id: int,
     datasource_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:write")),
 ):
     """运行组件：SQL 直连执行返回结果，Python/Shell 用 subprocess 执行返回日志"""
     c = _get_or_404(db, comp_id)
@@ -614,3 +614,111 @@ def set_component_status(
     db.commit()
     db.refresh(c)
     return {"message": f"状态已更新为 {STATUS_LABELS.get(new_status, new_status)}", **_serialize(c)}
+
+
+@router.post("/{comp_id}/resume")
+def resume_component(
+    comp_id: int,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """从暂停状态恢复组件"""
+    c = _get_or_404(db, comp_id)
+    if c.status != STATUS_PAUSED:
+        raise HTTPException(status_code=400, detail="组件未处于暂停状态")
+    prev = getattr(c, 'previous_status', None) or STATUS_DEVELOPING
+    c.status = prev
+    try:
+        c.previous_status = None
+    except Exception:
+        pass
+    db.commit()
+    db.refresh(c)
+    return {"message": f"已恢复到 {STATUS_LABELS.get(prev, prev)}", **_serialize(c)}
+
+
+# ===== 移动与排序 =====
+
+class MoveComponentRequest(BaseModel):
+    folder_id: Optional[int] = None
+    sort_order: Optional[int] = None
+
+
+class ReorderItem(BaseModel):
+    id: int
+    sort_order: int
+
+
+class ReorderRequest(BaseModel):
+    orders: list[ReorderItem]
+
+
+class MoveFolderRequest(BaseModel):
+    parent_id: Optional[int] = None
+    sort_order: Optional[int] = None
+
+
+@router.put("/{comp_id}/move")
+def move_component(
+    comp_id: int,
+    req: MoveComponentRequest,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """移动组件到指定文件夹并/或更新排序"""
+    c = _get_or_404(db, comp_id)
+    if req.folder_id is not None:
+        if req.folder_id != 0:
+            f = db.query(ComponentFolder).filter(ComponentFolder.id == req.folder_id).first()
+            if not f:
+                raise HTTPException(status_code=404, detail="目标文件夹不存在")
+        c.folder_id = req.folder_id if req.folder_id != 0 else None
+    if req.sort_order is not None:
+        c.sort_order = req.sort_order
+    db.commit()
+    db.refresh(c)
+    return {"message": "移动成功", **_serialize(c)}
+
+
+@router.post("/reorder")
+def reorder_components(
+    req: ReorderRequest,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """批量更新组件排序"""
+    for item in req.orders:
+        c = db.query(Component).filter(Component.id == item.id).first()
+        if c:
+            c.sort_order = item.sort_order
+    db.commit()
+    return {"message": "排序已更新"}
+
+
+@router.put("/folders/{folder_id}/move")
+def move_folder(
+    folder_id: int,
+    req: MoveFolderRequest,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """移动文件夹到指定父文件夹并/或更新排序"""
+    f = db.query(ComponentFolder).filter(ComponentFolder.id == folder_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="文件夹不存在")
+    if req.parent_id is not None:
+        if req.parent_id != 0:
+            parent = db.query(ComponentFolder).filter(ComponentFolder.id == req.parent_id).first()
+            if not parent:
+                raise HTTPException(status_code=404, detail="目标父文件夹不存在")
+            depth = _folder_depth(db, req.parent_id)
+            if depth >= 2:
+                raise HTTPException(status_code=400, detail="最多支持 3 层嵌套")
+        f.parent_id = req.parent_id if req.parent_id != 0 else None
+        # 重新计算 depth
+        f.depth = _folder_depth(db, f.parent_id)
+    if req.sort_order is not None:
+        f.sort_order = req.sort_order
+    db.commit()
+    db.refresh(f)
+    return {"id": f.id, "name": f.name, "type": f.type, "parent_id": f.parent_id, "depth": f.depth}

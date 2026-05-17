@@ -3,7 +3,7 @@
     <!-- 左侧文件夹树 -->
     <div class="ide-sidebar">
       <div class="sidebar-header">
-        <span class="sidebar-title">代码开发</span>
+        <span class="sidebar-title">组件开发</span>
       </div>
       <div class="sidebar-search">
         <a-input v-model="searchKw" size="small" placeholder="搜索" allow-clear>
@@ -13,11 +13,6 @@
       <div class="comp-tree">
         <template v-for="grp in typeGroups" :key="grp.type">
           <!-- 类型组标题 -->
-<<<<<<< HEAD
-          <div class="grp-header" @click="toggleGrp(grp.type)">
-            <icon-down v-if="!grpCollapsed[grp.type]" class="caret" />
-            <icon-right v-else class="caret" />
-=======
           <div
             class="grp-header"
             :class="{ 'drop-target': dragState.dropTargetId === grp.type && dragState.dropKind === 'group' }"
@@ -26,13 +21,12 @@
             @drop.prevent="onDropGroup($event, grp.type)"
           >
             <span class="caret">{{ grpCollapsed[grp.type] ? "▸" : "▾" }}</span>
->>>>>>> 86c19fa (feat: 组件树拖拽排序 + 多级右键菜单 + 统一类型徽章)
             <span class="grp-label">{{ grp.label }}</span>
             <span class="grp-count">{{ compCountByType(grp.type) }}</span>
-            <a-tooltip content="新建文件夹">
+            <a-tooltip v-if="userStore.hasPermission('component:write')" content="新建文件夹">
               <span class="grp-action" @click.stop="startNewFolder(grp.type, null)">⊞</span>
             </a-tooltip>
-            <a-tooltip content="新建组件">
+            <a-tooltip v-if="userStore.hasPermission('component:write')" content="新建组件">
               <span class="grp-action" @click.stop="newBlankTab(grp.type as Language)">＋</span>
             </a-tooltip>
           </div>
@@ -43,8 +37,17 @@
               <!-- 文件夹行 -->
               <div
                 v-if="node.kind === 'folder'"
-                class="tree-node folder-node"
+                :class="[
+                  'tree-node folder-node',
+                  { 'dragging': dragState.draggingId === node.id, 'drop-target': dragState.dropTargetId === node.id && dragState.dropKind === 'folder' }
+                ]"
                 :style="{ paddingLeft: `${14 + node.depth * 16}px` }"
+                :draggable="renamingFolderId !== node.id"
+                @contextmenu.prevent="showFolderContextMenu($event, node)"
+                @dragstart="onDragStart($event, node)"
+                @dragend="onDragEnd()"
+                @dragover.prevent="onDragOver($event, node)"
+                @drop.prevent="onDrop($event, node)"
               >
                 <span class="node-toggle" @click="toggleFolder(node.id)">
                   <span v-if="!folderCollapsed[node.id]" class="caret">▾</span>
@@ -62,62 +65,23 @@
                   @blur="submitRename(node.id)"
                   @keyup.enter="submitRename(node.id)"
                   @keyup.escape="renamingFolderId = null"
+                  @dragstart.stop.prevent
                   ref="renameInputRef"
                 />
                 <span class="node-actions">
-                  <a-tooltip v-if="node.depth < 3" content="新建子文件夹">
+                  <a-tooltip v-if="userStore.hasPermission('component:write') && node.depth < 3" content="新建子文件夹">
                     <span class="node-action" @click.stop="startNewFolder(node.folderType, node.id)">⊞</span>
                   </a-tooltip>
-                  <a-tooltip content="新建组件">
+                  <a-tooltip v-if="userStore.hasPermission('component:write')" content="新建组件">
                     <span class="node-action" @click.stop="newBlankTab(node.folderType as Language, node.id)">＋</span>
                   </a-tooltip>
-                  <a-tooltip content="删除文件夹">
+                  <a-tooltip v-if="userStore.hasPermission('component:write')" content="删除文件夹">
                     <span class="node-action danger" @click.stop="deleteFolder(node.id)">×</span>
                   </a-tooltip>
                 </span>
               </div>
 
               <!-- 组件行 -->
-<<<<<<< HEAD
-              <a-dropdown v-else trigger="contextMenu" position="br">
-                <div
-                  :class="['tree-node comp-node', { 'comp-open': isTabActive(node.id) }]"
-                  :style="{ paddingLeft: `${14 + node.depth * 16}px` }"
-                  @click="openComp(node.data)"
-                >
-                  <span :class="['lang-badge', `badge-${node.data.type}`]">
-                    {{ node.data.type.slice(0, 2).toUpperCase() }}
-                  </span>
-                  <span class="node-name">{{ node.name }}</span>
-                  <a-tooltip :content="statusLabel(node.data.status)" position="right">
-                    <span
-                      class="status-dot-only"
-                      :style="{ background: statusColor(node.data.status) }"
-                    ></span>
-                  </a-tooltip>
-                </div>
-                <template #content>
-                  <a-doption @click="openComp(node.data)">打开</a-doption>
-                  <a-doption-group title="设置状态">
-                    <a-doption
-                      v-for="opt in manualStatusOptions(node.data.status)"
-                      :key="opt.value"
-                      @click="setCompStatus(node.data, opt.value)"
-                    >
-                      <span class="opt-dot" :style="{ background: opt.color }"></span>
-                      {{ opt.label }}
-                    </a-doption>
-                  </a-doption-group>
-                  <a-doption
-                    v-if="node.data.status === 'paused'"
-                    @click="setCompStatus(node.data, '__resume__')"
-                  >从暂停恢复</a-doption>
-                  <a-doption class="opt-danger" @click="confirmDeleteComp(node.data)">
-                    删除
-                  </a-doption>
-                </template>
-              </a-dropdown>
-=======
               <div
                 v-else
                 :class="[
@@ -140,7 +104,12 @@
                 @drop.prevent="onDrop($event, node)"
               >
                 <LangIcon :type="node.data.type" :size="18" />
-                <span v-if="renamingCompId !== node.id" class="node-name">{{ node.name }}</span>
+                <span v-if="renamingCompId !== node.id" class="node-name">
+                  <template v-if="node.data.type === 'datax' && node.data.config_json?.source_table">
+                    {{ node.data.config_json.source_table }} → {{ node.data.config_json.target_table }}
+                  </template>
+                  <template v-else>{{ node.name }}</template>
+                </span>
                 <a-input
                   v-else
                   v-model="renameCompValue"
@@ -159,7 +128,6 @@
                   ></span>
                 </a-tooltip>
               </div>
->>>>>>> 86c19fa (feat: 组件树拖拽排序 + 多级右键菜单 + 统一类型徽章)
             </template>
           </template>
         </template>
@@ -168,13 +136,16 @@
 
     <!-- 右侧编辑区 -->
     <div class="ide-main">
-      <div v-if="tabs.length === 0" class="ide-empty">
-        <div class="empty-hint">从左侧选择组件，或新建</div>
-        <a-button type="outline" size="small" @click="newBlankTab('sql')">
-          <template #icon><icon-plus /></template>
-          新建 SQL
-        </a-button>
-      </div>
+      <!-- 代码编辑器区域 -->
+      <template v-if="tabs.length === 0">
+        <div class="ide-empty">
+          <div class="empty-hint">从左侧选择组件，或新建</div>
+          <a-button type="outline" size="small" @click="newBlankTab('sql')">
+            <template #icon><icon-plus /></template>
+            新建 SQL
+          </a-button>
+        </div>
+      </template>
 
       <template v-else>
         <!-- 标签栏 -->
@@ -197,89 +168,103 @@
               <a-doption @click="newBlankTab('sql')">新建 SQL</a-doption>
               <a-doption @click="newBlankTab('python')">新建 Python</a-doption>
               <a-doption @click="newBlankTab('shell')">新建 Shell</a-doption>
+              <a-doption @click="wizardVisible = true">新建 DataX 同步</a-doption>
             </template>
           </a-dropdown>
         </div>
 
-        <!-- 工具栏 -->
-        <div class="ide-toolbar" v-if="activeTab">
-          <a-select
-            v-if="activeTab.language === 'sql'"
-            v-model="activeTab.datasourceId"
-            size="small"
-            placeholder="选择数据源"
-            style="width: 200px"
-          >
-            <a-option v-for="ds in datasources" :key="ds.id" :value="ds.id">{{ ds.name }}</a-option>
-          </a-select>
-          <div style="flex:1" />
-          <a-space size="small">
-            <a-button size="small" type="primary" :loading="running" @click="runCode">
-              <template #icon><icon-play-arrow /></template>
-              运行
-            </a-button>
-            <a-button size="small" :loading="saving" @click="saveTab">
-              <template #icon><icon-save /></template>
-              保存
-            </a-button>
-            <a-button v-if="activeTab.componentId" size="small" @click="quickPublish">
-              <template #icon><icon-upload /></template>
-              发布
-            </a-button>
-          </a-space>
-        </div>
-
-        <!-- 编辑器 -->
-        <div class="editor-area">
-          <CodeEditor
-            :key="activeKey"
-            :model-value="activeTab ? activeTab.code : ''"
-            :language="activeTab ? activeTab.language : 'sql'"
-            :datasource-id="activeTab?.datasourceId"
-            ref="editorRef"
-            height="100%"
-            @update:model-value="onCodeChange"
+        <!-- DataX 同步任务面板（当前 tab 是 datax 类型时显示） -->
+        <template v-if="activeTab && activeTab.language === 'datax'">
+          <SyncTaskCanvas
+            :task-id="activeTab.syncTaskId ?? null"
+            :projects="projects"
+            @saved="loadComponents"
+            style="flex: 1; overflow: auto;"
           />
-        </div>
+        </template>
 
-        <!-- 结果面板 -->
-        <div v-if="result !== null || running" class="result-panel">
-          <div class="result-header">
-            <span class="result-info">
-              <template v-if="running">运行中...</template>
+        <!-- 代码编辑器（非 datax tab） -->
+        <template v-else-if="activeTab">
+          <!-- 工具栏 -->
+          <div class="ide-toolbar">
+            <a-select
+              v-if="activeTab.language === 'sql'"
+              v-model="activeTab.datasourceId"
+              size="small"
+              placeholder="选择数据源"
+              style="width: 200px"
+            >
+              <a-option v-for="ds in datasources" :key="ds.id" :value="ds.id">{{ ds.name }}</a-option>
+            </a-select>
+            <div style="flex:1" />
+            <a-space size="small">
+              <a-button v-if="userStore.hasPermission('component:write')" size="small" type="primary" :loading="running" @click="runCode">
+                <template #icon><icon-play-arrow /></template>
+                运行
+              </a-button>
+              <a-button v-if="userStore.hasPermission('component:write')" size="small" :loading="saving" @click="saveTab">
+                <template #icon><icon-save /></template>
+                保存
+              </a-button>
+              <a-button v-if="activeTab.componentId && userStore.hasPermission('component:publish')" size="small" @click="quickPublish">
+                <template #icon><icon-upload /></template>
+                发布
+              </a-button>
+            </a-space>
+          </div>
+
+          <!-- 编辑器 -->
+          <div class="editor-area">
+            <CodeEditor
+              :key="activeKey"
+              :model-value="activeTab ? activeTab.code : ''"
+              :language="activeTab ? activeTab.language : 'sql'"
+              :datasource-id="activeTab?.datasourceId"
+              ref="editorRef"
+              height="100%"
+              @update:model-value="onCodeChange"
+            />
+          </div>
+
+          <!-- 结果面板 -->
+          <div v-if="result !== null || running" class="result-panel">
+            <div class="result-header">
+              <span class="result-info">
+                <template v-if="running">运行中...</template>
+                <template v-else-if="result">
+                  <span v-if="result.type === 'table'" class="ok-text">
+                    ✓ 共查询到 {{ result.row_count }} 行{{ result.row_count >= 2000 ? '（已达上限，仅展示前 2000 行）' : '' }} · {{ result.duration_ms }}ms
+                  </span>
+                  <span v-else-if="result.type === 'rowcount'" class="ok-text">✓ 影响 {{ result.affected }} 行 · {{ result.duration_ms }}ms</span>
+                  <span v-else-if="result.type === 'log'" :class="result.ok ? 'ok-text' : 'err-text'">
+                    {{ result.ok ? '✓' : '✗' }} exit {{ result.exit_code }} · {{ result.duration_ms }}ms
+                  </span>
+                  <span v-else-if="result.error" class="err-text">✗ {{ result.error }}</span>
+                </template>
+              </span>
+              <a-button type="text" size="mini" @click="result = null">关闭</a-button>
+            </div>
+            <div class="result-body">
+              <div v-if="running" class="result-spin"><a-spin /></div>
               <template v-else-if="result">
-                <span v-if="result.type === 'table'" class="ok-text">
-                  ✓ 共查询到 {{ result.row_count }} 行{{ result.row_count >= 2000 ? '（已达上限，仅展示前 2000 行）' : '' }} · {{ result.duration_ms }}ms
-                </span>
-                <span v-else-if="result.type === 'rowcount'" class="ok-text">✓ 影响 {{ result.affected }} 行 · {{ result.duration_ms }}ms</span>
-                <span v-else-if="result.type === 'log'" :class="result.ok ? 'ok-text' : 'err-text'">
-                  {{ result.ok ? '✓' : '✗' }} exit {{ result.exit_code }} · {{ result.duration_ms }}ms
-                </span>
-                <span v-else-if="result.error" class="err-text">✗ {{ result.error }}</span>
+                <a-table
+                  v-if="result.type === 'table'"
+                  :columns="result.columns.map((c: string) => ({ title: c, dataIndex: c, ellipsis: true, width: 120 }))"
+                  :data="result.rows"
+                  :pagination="{ pageSize: 50, showTotal: true, size: 'mini' }"
+                  size="mini"
+                  :scroll="{ x: 'max-content' }"
+                  class="result-table"
+                />
+                <div v-else-if="result.type === 'rowcount'" class="result-text ok-text">
+                  执行成功，影响 {{ result.affected }} 行
+                </div>
+                <pre v-else-if="result.type === 'log'" :class="['result-log', result.ok ? 'log-ok' : 'log-err']">{{ result.log }}</pre>
+                <div v-else-if="result.error" class="result-text err-text">{{ result.error }}</div>
               </template>
-            </span>
-            <a-button type="text" size="mini" @click="result = null">关闭</a-button>
+            </div>
           </div>
-          <div class="result-body">
-            <div v-if="running" class="result-spin"><a-spin /></div>
-            <template v-else-if="result">
-              <a-table
-                v-if="result.type === 'table'"
-                :columns="result.columns.map((c: string) => ({ title: c, dataIndex: c, ellipsis: true, width: 120 }))"
-                :data="result.rows"
-                :pagination="{ pageSize: 50, showTotal: true, size: 'mini' }"
-                size="mini"
-                :scroll="{ x: 'max-content' }"
-                class="result-table"
-              />
-              <div v-else-if="result.type === 'rowcount'" class="result-text ok-text">
-                执行成功，影响 {{ result.affected }} 行
-              </div>
-              <pre v-else-if="result.type === 'log'" :class="['result-log', result.ok ? 'log-ok' : 'log-err']">{{ result.log }}</pre>
-              <div v-else-if="result.error" class="result-text err-text">{{ result.error }}</div>
-            </template>
-          </div>
-        </div>
+        </template>
       </template>
     </div>
 
@@ -296,6 +281,22 @@
         <a-input v-model="newFolderName" placeholder="如：核心指标" allow-clear />
       </a-form-item>
     </a-modal>
+
+    <!-- 全局右键菜单 -->
+    <ContextMenu
+      v-model:visible="contextMenu.visible"
+      :x="contextMenu.x"
+      :y="contextMenu.y"
+      :items="contextMenu.items"
+      @select="onMenuSelect"
+    />
+
+    <!-- DataX 同步任务向导 -->
+    <SyncTaskWizard
+      v-model:visible="wizardVisible"
+      :projects="projects"
+      @saved="loadComponents"
+    />
   </div>
 </template>
 
@@ -308,14 +309,23 @@ import {
   IconFolder, IconDelete, IconFolderAdd, IconFile,
 } from '@arco-design/web-vue/es/icon'
 import CodeEditor from '../components/CodeEditor.vue'
+import ContextMenu from '../components/ContextMenu.vue'
+import type { MenuItem } from '../components/ContextMenu.vue'
 import {
   getComponents, createComponent, updateComponent, deleteComponent,
   getDatasources, runSqlAdhoc, runComponentScript, quickPublishComponent,
   getComponentFolders, createComponentFolder, renameComponentFolder, deleteComponentFolder,
   setComponentStatus, resumeComponent,
+  moveComponent, reorderComponents, moveComponentFolder,
+  getSyncTasks, deleteSyncTask, getProjects,
 } from '../api'
+import SyncTaskCanvas from '../components/SyncTaskCanvas.vue'
+import SyncTaskWizard from '../components/SyncTaskWizard.vue'
+import { useUserStore } from '../stores/user'
 
-type Language = 'sql' | 'python' | 'shell'
+const userStore = useUserStore()
+
+type Language = 'sql' | 'python' | 'shell' | 'datax'
 
 interface Tab {
   key: string
@@ -325,13 +335,15 @@ interface Tab {
   componentId?: number
   folderId?: number | null
   datasourceId?: number
+  syncTaskId?: number | null
   dirty: boolean
 }
 
 const typeGroups = [
-  { type: 'sql', label: 'SQL 查询' },
+  { type: 'sql',    label: 'SQL 查询' },
   { type: 'python', label: 'Python 脚本' },
-  { type: 'shell', label: 'Shell 脚本' },
+  { type: 'shell',  label: 'Shell 脚本' },
+  { type: 'datax',  label: 'DataX 同步' },
 ]
 
 
@@ -342,15 +354,19 @@ const activeTab = computed<Tab | null>(() => tabs.value.find(t => t.key === acti
 const components = ref<any[]>([])
 const datasources = ref<any[]>([])
 const folders = ref<any[]>([])  // flat list from API
+const projects = ref<any[]>([])
 const searchKw = ref('')
 
-const grpCollapsed = reactive<Record<string, boolean>>({ sql: false, python: false, shell: false })
+const grpCollapsed = reactive<Record<string, boolean>>({ sql: false, python: false, shell: false, datax: false })
 const folderCollapsed = reactive<Record<number, boolean>>({})
 
 const editorRef = ref<any>(null)
 const running = ref(false)
 const saving = ref(false)
 const result = ref<any>(null)
+
+// DataX 同步任务向导
+const wizardVisible = ref(false)
 
 const saveModalVisible = ref(false)
 const saveName = ref('')
@@ -363,6 +379,28 @@ const newFolderContext = ref<{ type: string; parentId: number | null } | null>(n
 const renamingFolderId = ref<number | null>(null)
 const renameValue = ref('')
 const renameInputRef = ref<any>(null)
+
+// ---- 右键菜单 ----
+const contextMenu = reactive({
+  visible: false,
+  x: 0,
+  y: 0,
+  items: [] as MenuItem[],
+})
+
+// ---- 剪贴板 ----
+const clipboard = ref<{ kind: 'component' | 'folder'; action: 'copy' | 'cut'; id: number; type?: string; folderType?: string } | null>(null)
+
+// ---- 拖拽 ----
+const dragState = reactive({
+  draggingId: null as number | null,
+  dragKind: null as 'component' | 'folder' | null,
+  dragFolderType: null as string | null,
+  dragFolderId: null as number | null,
+  dropTargetId: null as number | string | null,
+  dropKind: null as 'component' | 'folder' | 'group' | null,
+  dropPosition: null as 'before' | 'after' | 'inside' | null,
+})
 
 let tabSeq = 0
 function genKey() { return `tab-${++tabSeq}` }
@@ -386,6 +424,7 @@ function flatTree(type: string): TreeNode[] {
   const kw = searchKw.value.toLowerCase()
   const searching = !!kw
   const typeFolders = folders.value.filter(f => f.type === type)
+  const validFolderIds = new Set(typeFolders.map(f => f.id))
   const typeComps = components.value.filter(c => {
     if (c.type !== type) return false
     if (kw && !c.name.toLowerCase().includes(kw)) return false
@@ -415,10 +454,6 @@ function flatTree(type: string): TreeNode[] {
         traverse(f.id, depth + 1)
       }
     }
-<<<<<<< HEAD
-    // Child components
-    const childComps = typeComps.filter(c => (c.folder_id ?? null) === parentId)
-=======
     // Child components (orphaned components with invalid folder_id treated as root)
     const childComps = typeComps.filter(c => {
       const fid = c.folder_id ?? null
@@ -428,7 +463,6 @@ function flatTree(type: string): TreeNode[] {
       return fid === parentId
     })
     childComps.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || b.id - a.id)
->>>>>>> 86c19fa (feat: 组件树拖拽排序 + 多级右键菜单 + 统一类型徽章)
     for (const c of childComps) {
       result.push({ nodeKey: `c-${c.id}`, kind: 'component', id: c.id, name: c.name, depth, folderType: type, data: c })
     }
@@ -449,6 +483,27 @@ function isTabActive(compId: number) {
 }
 
 function openComp(c: any) {
+  if (c.type === 'datax') {
+    const existing = tabs.value.find(t => t.componentId === c.id)
+    if (existing) { switchTab(existing.key); return }
+    const key = genKey()
+    const cfg = c.config_json || {}
+    const src = cfg.source_table || ''
+    const dst = cfg.target_table || ''
+    const tabName = src && dst ? `${src} → ${dst}` : c.name
+    tabs.value.push({
+      key,
+      name: tabName,
+      code: '',
+      language: 'datax',
+      componentId: c.id,
+      folderId: c.folder_id ?? null,
+      syncTaskId: cfg.sync_task_id ?? null,
+      dirty: false,
+    })
+    switchTab(key)
+    return
+  }
   const existing = tabs.value.find(t => t.componentId === c.id)
   if (existing) { switchTab(existing.key); return }
   const key = genKey()
@@ -474,9 +529,10 @@ function openComp(c: any) {
 }
 
 function newBlankTab(lang: Language = 'sql', folderId?: number | null) {
+  if (lang === 'datax') { wizardVisible.value = true; return }
   const key = genKey()
-  const names: Record<Language, string> = { sql: 'Untitled SQL', python: 'Untitled Python', shell: 'Untitled Shell' }
-  tabs.value.push({ key, name: names[lang], code: '', language: lang, folderId: folderId ?? null, dirty: false })
+  const names: Record<string, string> = { sql: 'Untitled SQL', python: 'Untitled Python', shell: 'Untitled Shell' }
+  tabs.value.push({ key, name: names[lang] ?? 'Untitled', code: '', language: lang, folderId: folderId ?? null, dirty: false })
   switchTab(key)
 }
 
@@ -616,9 +672,18 @@ async function setCompStatus(c: any, status: string) {
 async function confirmDeleteComp(c: any) {
   if (!confirm(`确定删除组件「${c.name}」？此操作不可恢复`)) return
   try {
-    await deleteComponent(c.id)
+    if (c.type === 'datax') {
+      // 后端 delete_task 会级联删除关联的 Component 和 Workflow
+      const syncTaskId = c.config_json?.sync_task_id
+      if (syncTaskId) {
+        await deleteSyncTask(syncTaskId)
+      } else {
+        await deleteComponent(c.id)
+      }
+    } else {
+      await deleteComponent(c.id)
+    }
     Message.success('已删除')
-    // 关闭已打开的 tab
     const idx = tabs.value.findIndex(t => t.componentId === c.id)
     if (idx >= 0) closeTab(tabs.value[idx].key)
     await loadComponents()
@@ -757,11 +822,16 @@ async function loadDatasources() {
   } catch {}
 }
 
-<<<<<<< HEAD
-=======
+async function loadProjects() {
+  try {
+    const res: any = await getProjects({ page_size: 200 })
+    projects.value = res.items || res || []
+  } catch {}
+}
+
 // ---- 右键菜单 ----
 function typeLabel(type: string): string {
-  const map: Record<string, string> = { sql: 'SQL 查询', python: 'Python 脚本', shell: 'Shell 脚本' }
+  const map: Record<string, string> = { sql: 'SQL 查询', python: 'Python 脚本', shell: 'Shell 脚本', datax: 'DataX 同步' }
   return map[type] || type
 }
 
@@ -769,6 +839,14 @@ function buildCompMenuItems(node: TreeNode): MenuItem[] {
   const c = node.data
   const t = c.type as string
   const items: MenuItem[] = []
+
+  if (t === 'datax') {
+    items.push({ key: 'open', label: '打开' })
+    items.push({ divider: true })
+    items.push({ key: 'delete', label: '删除', danger: true })
+    return items
+  }
+
   items.push({ key: 'open', label: '打开' })
   items.push({ key: 'run', label: '运行' })
   items.push({ divider: true })
@@ -896,8 +974,12 @@ async function onMenuSelect(key: string) {
     if (targetNode.kind === 'component') await doMoveComponent(targetNode.data.id, folderId)
   } else if (key.startsWith('new-')) {
     const lang = key.replace('new-', '') as Language
-    const folderId = targetNode.kind === 'folder' ? targetNode.id : (targetNode.data?.folder_id ?? null)
-    newBlankTab(lang, folderId)
+    if (lang === 'datax') {
+      wizardVisible.value = true
+    } else {
+      const folderId = targetNode.kind === 'folder' ? targetNode.id : (targetNode.data?.folder_id ?? null)
+      newBlankTab(lang, folderId)
+    }
   }
 }
 
@@ -1216,8 +1298,7 @@ async function doMoveFolder(folderId: number, parentId: number) {
   } catch {}
 }
 
->>>>>>> 86c19fa (feat: 组件树拖拽排序 + 多级右键菜单 + 统一类型徽章)
-onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]))
+onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources(), loadProjects()]))
 </script>
 
 <style scoped>
@@ -1506,4 +1587,25 @@ onMounted(() => Promise.all([loadFolders(), loadComponents(), loadDatasources()]
 }
 .log-ok { color: #1D2129; }
 .log-err { color: #F53F3F; }
+
+/* ---- 拖拽状态 ---- */
+.dragging {
+  opacity: 0.6;
+  background: #EAF1FF !important;
+}
+.drop-target {
+  background: #EAF1FF !important;
+  border-radius: 4px;
+}
+.folder-node.drop-target {
+  background: #EAF1FF !important;
+  box-shadow: inset 0 0 0 1px #2B5AED;
+}
+.comp-node.drop-target {
+  background: transparent !important;
+}
+.comp-node.drop-before {
+  box-shadow: inset 0 2px 0 0 #2B5AED;
+}
+/* drop-after 不显示线，因为等价于下一个节点的 drop-before */
 </style>

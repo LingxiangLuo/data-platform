@@ -51,11 +51,7 @@
           </a-menu-item>
           <a-menu-item key="/sql-dev">
             <template #icon><icon-code-block /></template>
-            代码开发
-          </a-menu-item>
-          <a-menu-item key="/sync-tasks">
-            <template #icon><icon-sync /></template>
-            数据同步
+            组件开发
           </a-menu-item>
         </a-sub-menu>
 
@@ -99,6 +95,22 @@
           <a-menu-item key="/monitor">
             <template #icon><icon-computer /></template>
             系统监控
+          </a-menu-item>
+          <a-menu-item v-if="userStore.hasPermission('user:manage')" key="/admin/users">
+            <template #icon><icon-user /></template>
+            用户管理
+          </a-menu-item>
+          <a-menu-item v-if="userStore.hasPermission('role:manage')" key="/admin/roles">
+            <template #icon><icon-idcard /></template>
+            角色管理
+          </a-menu-item>
+          <a-menu-item v-if="userStore.hasPermission('system:config')" key="/admin/notify">
+            <template #icon><icon-notification /></template>
+            通知配置
+          </a-menu-item>
+          <a-menu-item v-if="userStore.hasPermission('system:config')" key="/admin/sso">
+            <template #icon><icon-lock /></template>
+            SSO 配置
           </a-menu-item>
         </a-sub-menu>
       </a-menu>
@@ -190,7 +202,7 @@ import {
   IconCalendar, IconFile, IconApps, IconRelation,
   IconComputer, IconNotification, IconDown, IconUser, IconExport,
   IconSearch, IconSettings, IconHistory, IconCode, IconBranch,
-  IconList, IconCodeBlock,
+  IconList, IconCodeBlock, IconIdcard, IconLock,
 } from '@arco-design/web-vue/es/icon'
 
 const router = useRouter()
@@ -417,4 +429,10 @@ function handleLogout() { userStore.logout(); router.push('/login') }
 .fade-enter-active { transition: opacity 0.2s; }
 .fade-leave-active { transition: opacity 0.1s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+
+/* page transition */
+.page-enter-active { transition: opacity 0.15s ease, transform 0.15s ease; }
+.page-leave-active { transition: opacity 0.1s ease, transform 0.1s ease; }
+.page-enter-from { opacity: 0; transform: translateY(6px); }
+.page-leave-to { opacity: 0; transform: translateY(-4px); }
 </style>
