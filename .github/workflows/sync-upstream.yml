@@ -23,12 +23,32 @@ jobs:
         run: |
           git remote add upstream https://github.com/barryLiu199/data-platform-mvp.git
           git fetch upstream main
-          git checkout -B main upstream/main
-          git push origin main --force-with-lease
+
+          git checkout main
+          git reset --hard upstream/main
+
+          # 把 CI 文件自身保留回来（upstream 没有这个文件，reset 后会丢失）
+          git checkout origin/main -- .github/workflows/sync-upstream.yml 2>/dev/null || true
+
+          # 只在有变化时提交
+          if ! git diff --quiet HEAD; then
+            git commit -m "ci: restore sync workflow after upstream reset"
+          fi
+
+          git push origin main --force
 
       - name: Merge main into dev
         run: |
+          git fetch origin dev
           git checkout dev
-          git merge main --no-edit
-          git push origin dev
-        continue-on-error: true
+          git reset --hard origin/dev
+
+          if git merge main --no-edit; then
+            git push origin dev
+            echo "✅ dev merged with main successfully"
+          else
+            echo "⚠️ Merge conflict — resolve manually then merge main into dev"
+            git diff --name-only --diff-filter=U
+            git merge --abort
+            exit 1
+          fi
