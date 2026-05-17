@@ -2,152 +2,86 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 项目概览
+## 开发命令
 
-数据中台门户，前端 Vue 3 + Arco Design，后端 FastAPI + SQLAlchemy，调度引擎对接 DolphinScheduler。
-
-- 前端：`portal/frontend/` — Vite + Vue 3 + TypeScript + Arco Design
-- 后端：`portal/backend/` — FastAPI + uvicorn，启动时自动执行 schema migration
-- 部署：Docker Compose，nginx 统一入口（80 端口），内网测试服务器 `192.168.1.3`
-
-## 常用命令
-
+### 后端
 ```bash
-# 前端本地开发
-cd portal/frontend && npm run dev
+cd portal/backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
 
-# 前端类型检查
-cd portal/frontend && npx vue-tsc --noEmit
+### 前端
+```bash
+cd portal/frontend
+npm install
+npm run dev   # 开发服务器 :5173，/api 代理到 :8000
+npm run build # 生产构建
+```
 
-# 前端构建验证
-cd portal/frontend && npx vite build
-
-# 后端本地启动
-cd portal/backend && uvicorn main:app --reload --port 8000
-
-# 后端语法检查
-cd portal/backend && find . -name "*.py" | xargs python -m py_compile
-
-# 部署到测试服务器（内网 192.168.1.3）
+### 部署到测试服务器
+```bash
+# 必须在 test 分支上执行
+cd ~/data-platform-test
 bash scripts/deploy-to-test.sh
-
-# 强制全量重建（依赖变化时）
-bash scripts/deploy-to-test.sh --force
+# 访问 http://192.168.1.3:8888
 ```
 
 ## 分支模型
 
+| 分支 | 职责 |
+|------|------|
+| `main` | 纯净同步上游 `barryLiu199/data-platform-mvp`，不直接开发 |
+| `dev` | 功能开发，只放通用功能代码，不放测试环境配置 |
+| `test` | 测试环境部署验证，功能从 dev cherry-pick |
+| `feature/` | 向上游贡献，必须基于 `upstream/main` |
+
+- **test 不从 dev 合并**，只 cherry-pick 功能 commit
+- 向上游发 PR 必须基于 `upstream/main`，不能基于 dev
+- git 命令需要走本地代理：`git config http.proxy http://127.0.0.1:7890`
+
+## 架构概览
+
+### 整体结构
+
 ```
-upstream (barryLiu199/data-platform-mvp)
-    │  CI 每 30 分钟自动同步
-    ▼
-  main  — 只读镜像，不直接提交，仅存放 .github/workflows/
-    │  CI 自动 merge（无冲突时）
-    ▼
-   dev  — 唯一集成分支，所有功能在此汇聚，push 后自动部署测试环境
-    ↑
- feature/xxx — 每个功能一个分支，PR 合并回 dev
-```
-
-**规则：**
-- main 不直接提交，只有 CI 写入（upstream 同步 + 保留 .github/workflows/）
-- dev 通过 PR 合并，不直接 push（紧急 hotfix 除外）
-- feature/rbac-sso 分支存放未完成的 RBAC/SSO 功能，待后续继续开发
-- 向上游贡献时，基于 upstream/main 创建 feature 分支，cherry-pick 通用功能 commit
-
-## 功能开发流程
-
-```bash
-# 1. 从最新 dev 创建 feature 分支
-git checkout dev && git pull origin dev
-git checkout -b feature/xxx
-
-# 2. 开发、小步提交
-git add <files> && git commit -m "feat: xxx"
-
-# 3. 推送并开 PR → dev
-git push origin feature/xxx
-gh pr create --base dev --title "feat: xxx"
-
-# PR 合并后：CI 自动部署到测试服务器 → test-engineer 验证
+Browser → Nginx(:80) → portal-frontend (静态) + /api/* → portal-backend (FastAPI)
+                                                              ↓
+                                                    MySQL + DolphinScheduler
+                                                              ↓
+                                                    DataX Jobs (via DS SHELL节点)
 ```
 
-## 向上游贡献
+### 后端关键设计
 
-只贡献通用功能（对所有用户有价值，不含私有业务/测试环境配置）。
+**无 Alembic 迁移**：数据库 schema 变更通过 `main.py` 中的 `_migrate_*()` 函数在启动时自动执行（`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`）。新增字段必须在这里加 migration 函数。
 
-```bash
-# 1. 基于 upstream/main 创建分支
-git fetch upstream
-git checkout -b feature/upstream-xxx upstream/main
+**DSL Translator**（`app/core/dsl_translator.py`）：Portal 的核心翻译层，把 Component（sql/python/shell/datax）和 Workflow DAG 翻译成 DolphinScheduler 原生 JSON。DataX 任务翻译为 DS SHELL 节点 + heredoc 临时 JSON，不使用 DS 原生 DataX 节点。
 
-# 2. cherry-pick 功能 commit（只挑功能，不挑部署/配置）
-git cherry-pick <sha>
+**DS Client**（`app/core/ds_client.py`）：封装对 DolphinScheduler REST API 的调用（创建/更新/发布/运行工作流）。
 
-# 3. 向上游发 PR
-git push origin feature/upstream-xxx
-gh pr create --repo barryLiu199/data-platform-mvp --title "feat: xxx"
-```
+**API 层**（`app/api/`）：每个模块对应一个 FastAPI router，在 `main.py` 中统一注册。
 
-## CI/CD
+### 前端关键设计
 
-三个工作流（均在 `.github/workflows/`，保存在 main 分支）：
+**`useFileTree.ts` composable**：类型颜色、渐变、缩写（SQ/PY/SH/DX）的单一来源，`SqlDev`、`DagNodePanel`、`DagCustomNode` 共用，不要在各组件里硬编码类型颜色。
 
-| 文件 | 触发 | 运行环境 | 做什么 |
-|------|------|----------|--------|
-| `sync-upstream.yml` | 每 30 分钟 | ubuntu-latest | upstream → main → dev 自动同步 |
-| `deploy-test.yml` | push dev | self-hosted (Mac) | rsync + docker compose 部署到测试服务器 |
-| `pr-check.yml` | PR → dev | self-hosted (Mac) | 前端 tsc + build，后端语法检查 |
+**`LangIcon.vue`**：统一的类型徽章组件，从 `useFileTree` 读取配置，渐变背景 + 两字母缩写。
 
-Self-hosted runner 运行在开发 Mac 上（launchd 开机自启），通过 SSH 内网直连测试服务器 `192.168.1.3`。
+**`ContextMenu.vue`**：多级右键菜单，Teleport 挂载到 body，支持 hover 展开子菜单。
 
-**Runner 管理：**
-```bash
-# 查看状态
-cd ~/actions-runner && ./svc.sh status
+**DAG 画布**（`components/dag/`）：基于 Vue Flow，`DagCanvas.vue` 是主画布，`DagNodePanel.vue` 是左侧组件库，`DagCustomNode.vue` 是节点卡片，`DagContextMenu.vue` 是节点右键菜单。
 
-# 启动 / 停止
-cd ~/actions-runner && ./svc.sh start
-cd ~/actions-runner && ./svc.sh stop
+**`vite.config.ts` 无 `resolve.alias`**：不能用 `@/` 路径别名，必须用相对路径（`../composables/useFileTree`）。
 
-# 查看日志
-tail -f ~/Library/Logs/actions.runner.LingxiangLuo-data-platform.mac-runner/Runner_*.log
-```
+**SqlDev.vue 编辑注意**：Edit 工具在该文件上容易卡住，改用 Python 脚本（`python3 << 'EOF' ... EOF`）进行编辑。
 
-**SSH 密钥：** `~/.ssh/test_server_key`（私钥，公钥已部署到 192.168.1.3）
+### 组件类型
 
-## 代码审查
-
-- 修改单函数/小 bug fix → `quick-code-reviewer`（主动触发，不等用户要求）
-- 跨 3+ 文件 / 涉及 auth/权限/数据库模型 → `deep-code-reviewer`
-- 合并前 / 发 PR 前 → `release-engineer`
-- 部署后 → `test-engineer`
-
-## 后端约定
-
-- 数据库 migration 写在 `main.py` 的启动钩子里（`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`），不用 Alembic
-- 新增 API 端点后需在 `main.py` 注册路由
-- 权限控制：敏感端点叠加 `Depends(require_permission("xxx:yyy"))`，不改 `get_current_user`
-
-## 前端约定
-
-- API 函数统一在 `src/api/index.ts`，不在组件里直接 axios
-- 路由定义在 `src/router/index.ts`，admin 子路由需加 `meta.permission`
-- 组件库：Arco Design（`@arco-design/web-vue`），不引入其他 UI 库
-
-## Git 代理
-
-```bash
-git config http.proxy http://127.0.0.1:7890
-git config https.proxy http://127.0.0.1:7890
-```
-
-## GitHub 下载加速
-
-下载 GitHub 资源（runner、release 附件等）时，在原始 URL 前加代理前缀：
-
-```bash
-curl -L -O "https://gh-proxy.com/https://github.com/user/repo/releases/download/v1.0/file.tar.gz"
-```
-
-备用节点：`https://v6.gh-proxy.org/`
+| type | 颜色 | 缩写 | 说明 |
+|------|------|------|------|
+| `sql` | 琥珀橙 `#D97706` | SQ | SQL 查询 |
+| `python` | 蓝 `#3776AB` | PY | Python 脚本 |
+| `shell` | 绿 `#4EAA25` | SH | Shell 脚本 |
+| `datax` | 紫 `#7C3AED` | DX | DataX 同步 |

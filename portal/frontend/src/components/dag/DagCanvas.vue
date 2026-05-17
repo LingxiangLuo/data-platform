@@ -6,7 +6,7 @@ import { Controls } from '@vue-flow/controls'
 import DagCustomNode from './DagCustomNode.vue'
 import DagContextMenu from './DagContextMenu.vue'
 
-interface DagNode { id: string; component_id: number; name: string; position: { x: number; y: number }; skip: boolean }
+interface DagNode { id: string; component_id: number; type?: string; name: string; position: { x: number; y: number }; skip: boolean }
 interface DagEdge { id: string; source: string; target: string }
 
 const props = defineProps<{ nodes: DagNode[]; edges: DagEdge[] }>()
@@ -26,7 +26,7 @@ const flowEdges = ref<any[]>([])
 watch(() => [props.nodes, props.edges], () => {
   flowNodes.value = props.nodes.map(n => ({
     id: n.id, type: 'component-node', position: n.position,
-    data: { label: n.name, type: getNodeType(n.component_id), skip: n.skip, component_id: n.component_id },
+    data: { label: n.name, type: n.type || 'sql', skip: n.skip, component_id: n.component_id },
   }))
   flowEdges.value = props.edges.map(e => ({
     id: e.id, source: e.source, target: e.target, animated: true,
@@ -35,8 +35,8 @@ watch(() => [props.nodes, props.edges], () => {
 }, { immediate: true })
 
 function getNodeType(compId: number): string {
-  // 从节点数据中获取类型（通过 props.nodes）
-  return 'sql' // 默认，实际由 WorkflowEditor 传入
+  const node = props.nodes.find(n => n.component_id === compId)
+  return (node as any)?.type || 'sql'
 }
 
 // 连线事件
@@ -93,7 +93,7 @@ function deleteNode(id: string) {
 function emitUpdate() {
   const nodes = flowNodes.value.map((n: any) => ({
     id: n.id, component_id: n.data.component_id, name: n.data.label,
-    position: n.position, skip: n.data.skip || false,
+    type: n.data.type, position: n.position, skip: n.data.skip || false,
   }))
   const edges = flowEdges.value.map((e: any) => ({ id: e.id, source: e.source, target: e.target }))
   emit('update', { nodes, edges })

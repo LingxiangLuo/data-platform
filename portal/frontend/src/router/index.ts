@@ -9,6 +9,11 @@ const router = createRouter({
       component: () => import('../views/Login.vue'),
     },
     {
+      path: '/oauth-callback',
+      name: 'OAuthCallback',
+      component: () => import('../views/OAuthCallback.vue'),
+    },
+    {
       path: '/',
       component: () => import('../layouts/BasicLayout.vue'),
       redirect: '/dashboard',
@@ -105,18 +110,67 @@ const router = createRouter({
           component: () => import('../views/Monitor.vue'),
           meta: { title: '系统监控' },
         },
+        // 系统管理
+        {
+          path: 'admin/users',
+          name: 'AdminUsers',
+          component: () => import('../views/admin/Users.vue'),
+          meta: { title: '用户管理', permission: 'user:manage' },
+        },
+        {
+          path: 'admin/roles',
+          name: 'AdminRoles',
+          component: () => import('../views/admin/Roles.vue'),
+          meta: { title: '角色管理', permission: 'role:manage' },
+        },
+        {
+          path: 'admin/sso',
+          name: 'AdminSso',
+          component: () => import('../views/admin/Sso.vue'),
+          meta: { title: 'SSO 配置', permission: 'system:config' },
+        },
+        {
+          path: 'admin/notify',
+          name: 'AdminNotify',
+          component: () => import('../views/admin/Notify.vue'),
+          meta: { title: '通知配置', permission: 'system:config' },
+        },
       ],
+    },
+    {
+      path: '/403',
+      name: 'Forbidden',
+      component: () => import('../views/Forbidden.vue'),
     },
   ],
 })
 
-router.beforeEach((to, _from, next) => {
-  const token = localStorage.getItem('token')
-  if (to.path !== '/login' && !token) {
-    next('/login')
-  } else {
+router.beforeEach(async (to, _from, next) => {
+  if (to.path === '/login' || to.path === '/oauth-callback') {
     next()
+    return
   }
+
+  const { useUserStore } = await import('../stores/user')
+  const store = useUserStore()
+
+  // 未初始化时先拉用户信息（依赖 httponly cookie，axios withCredentials）
+  if (!store.userInfo) {
+    await store.fetchUser()
+  }
+
+  if (!store.isLoggedIn) {
+    next('/login')
+    return
+  }
+
+  const permission = to.meta?.permission as string | undefined
+  if (permission && !store.hasPermission(permission)) {
+    next('/403')
+    return
+  }
+
+  next()
 })
 
 export default router

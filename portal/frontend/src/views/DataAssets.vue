@@ -173,7 +173,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { IconRefresh, IconSearch, IconStorage } from '@arco-design/web-vue/es/icon'
-import { getDatasources, getMetadataTables, getMetadataColumns, getMetadataPreview } from '../api'
+import { getDatasources, getMetadataTables, getMetadataColumns, getMetadataPreview, getMetadataQuality } from '../api'
 
 const dsOptions = ref<{ label: string; value: number }[]>([])
 const dsId = ref<number | undefined>(undefined)
@@ -187,6 +187,8 @@ const columns = ref<any[]>([])
 const columnsLoading = ref(false)
 const preview = ref<any>({ columns: [], rows: [] })
 const previewLoading = ref(false)
+const quality = ref<any>({ total_rows: 0, columns: [] })
+const qualityLoading = ref(false)
 
 const filteredTables = computed(() => {
   if (!tableFilter.value) return tables.value
@@ -230,6 +232,25 @@ function getAllBadges(record: any) {
   return badges
 }
 
+const qualityScore = computed(() => {
+  if (!quality.value.columns?.length) return 0
+  const total = quality.value.columns.reduce((s: number, c: any) => s + c.score, 0)
+  return Math.round(total / quality.value.columns.length)
+})
+
+const scoreColor = computed(() => {
+  const s = qualityScore.value
+  if (s >= 90) return '#00b42a'
+  if (s >= 60) return '#ff7d00'
+  return '#f53f3f'
+})
+
+const allIssues = computed(() => {
+  return quality.value.columns
+    ?.filter((c: any) => c.issues?.length)
+    ?.map((c: any) => ({ field: c.name, issues: c.issues })) || []
+})
+
 async function loadDatasources() {
   const res: any = await getDatasources({ page: 1, page_size: 100 })
   dsOptions.value = (res.items || [])
@@ -265,6 +286,7 @@ async function selectTable(name: string) {
   selectedTable.value = name
   detailTab.value = 'columns'
   preview.value = { columns: [], rows: [] }
+  quality.value = { total_rows: 0, columns: [] }
   columnsLoading.value = true
   try {
     const res: any = await getMetadataColumns(dsId.value!, name)
@@ -274,6 +296,22 @@ async function selectTable(name: string) {
     columns.value = []
   }
   columnsLoading.value = false
+}
+
+async function loadQuality() {
+  if (!dsId.value || !selectedTable.value) return
+  qualityLoading.value = true
+  try {
+    const res: any = await getMetadataQuality(dsId.value, selectedTable.value)
+    quality.value = {
+      total_rows: res.total_rows || 0,
+      columns: res.columns || [],
+    }
+  } catch (e: any) {
+    Message.error(e?.response?.data?.detail || '数据质量分析失败')
+    quality.value = { total_rows: 0, columns: [] }
+  }
+  qualityLoading.value = false
 }
 
 async function loadPreview() {

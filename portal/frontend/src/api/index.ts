@@ -156,12 +156,12 @@ export const quickPublishComponent = (id: number) =>
 export const setComponentStatus = (id: number, status: string) =>
   api.put(`/components/${id}/status`, { status })
 // Component Move / Reorder
-export const moveComponent = (id: number, folderId?: number, sortOrder?: number) =>
-  api.put(`/components/${id}/move`, { folder_id: folderId, sort_order: sortOrder })
+export const moveComponent = (id: number, folderId?: number | null, sortOrder?: number) =>
+  api.put(`/components/${id}/move`, { folder_id: folderId ?? 0, sort_order: sortOrder })
 export const reorderComponents = (orders: { id: number; sort_order: number }[]) =>
   api.post('/components/reorder', { orders })
-export const moveComponentFolder = (id: number, parentId?: number, sortOrder?: number) =>
-  api.put(`/components/folders/${id}/move`, { parent_id: parentId, sort_order: sortOrder })
+export const moveComponentFolder = (id: number, parentId?: number | null, sortOrder?: number) =>
+  api.put(`/components/folders/${id}/move`, { parent_id: parentId ?? 0, sort_order: sortOrder })
 export const resumeComponent = (id: number) =>
   api.post(`/components/${id}/resume`)
 
