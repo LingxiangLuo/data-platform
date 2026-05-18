@@ -357,6 +357,7 @@ const jsonError = ref('')
 const ddlModalVisible = ref(false)
 const ddlText = ref('')
 const ddlStatements = ref<string[]>([])
+const ddlTargetColumns = ref<any[]>([])
 const ddlGenerating = ref(false)
 const ddlExecuting = ref(false)
 
@@ -475,7 +476,12 @@ async function loadTargetColumns() {
   try {
     const res: any = await getMetadataColumns(config.target_id, config.target_table)
     targetColumns.value = res.columns || []
-  } catch { targetColumns.value = [] }
+  } catch (e: any) {
+    targetColumns.value = []
+    const msg = e?.response?.data?.detail || '读取目标表字段失败'
+    Message.error(msg)
+    throw e
+  }
 }
 
 // ---- 脚本模式 ----
@@ -659,6 +665,7 @@ async function handleAutoCreateTable() {
     })
     ddlText.value = res.ddl || ''
     ddlStatements.value = Array.isArray(res.statements) ? res.statements : [res.ddl]
+    ddlTargetColumns.value = Array.isArray(res.columns) ? res.columns : []
     ddlModalVisible.value = true
   } catch {} finally {
     ddlGenerating.value = false
@@ -678,7 +685,16 @@ async function confirmExecuteDDL() {
       Message.success(res.message || '建表成功')
       ddlModalVisible.value = false
       config.field_mapping = []
-      await loadTargetColumns()
+      // 先用 generateDDL 返回的列信息更新目标列，保证画布立即渲染
+      if (ddlTargetColumns.value.length) {
+        targetColumns.value = ddlTargetColumns.value
+      }
+      // 再异步刷新真实列信息（某些数据库信息 schema 可能有延迟）
+      try {
+        await loadTargetColumns()
+      } catch {
+        Message.warning('目标列刷新延迟，已使用推断类型，稍后自动同步')
+      }
     } else {
       Message.error(res.message || '建表失败')
     }

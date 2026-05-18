@@ -617,11 +617,16 @@ def generate_ddl(
     if not re.fullmatch(r"[A-Za-z0-9_]+", req.target_table):
         raise HTTPException(status_code=400, detail="表名格式非法：仅允许字母、数字和下划线")
     statements = _generate_ddl_sql(t or "mysql", req.target_table, req.columns)
+    target_cols = [
+        {"name": c.name, "type": _map_column_type(c.type, t or "mysql"), "nullable": c.nullable}
+        for c in req.columns
+    ]
     return {
         "datasource_id": ds.id,
         "target_table": req.target_table,
         "ddl": ";\n".join(statements),
         "statements": statements,
+        "columns": target_cols,
     }
 
 
@@ -651,7 +656,9 @@ def execute_ddl(
     # 校验每条语句
     for sql in stmts:
         head = sql.lstrip().upper()
-        allowed = any(head.startswith(prefix) for prefix in ("CREATE TABLE", "COMMENT ON COLUMN"))
+        allowed = any(head.startswith(prefix) for prefix in (
+            "CREATE TABLE", "COMMENT ON COLUMN", "IF OBJECT_ID", "IF NOT EXISTS",
+        ))
         if not allowed:
             raise HTTPException(status_code=400, detail=f"不允许的语句: {sql[:60]}...")
 
