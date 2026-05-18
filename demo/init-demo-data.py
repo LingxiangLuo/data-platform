@@ -210,7 +210,44 @@ def create_folder(cookies, name: str, type_: str, parent_id: int = None) -> int:
 
 
 def create_component(cookies, name: str, type_: str, description: str, config_json: dict, folder_id: int = None) -> int:
-    """创建组件"""
+    """创建或更新组件（同名则更新配置）"""
+    # 先查找是否已存在同名组件
+    r2 = requests.get(
+        f"{API_URL}/components",
+        params={"type": type_, "keyword": name, "page_size": 50},
+        cookies=cookies,
+        timeout=10,
+    )
+    existing = None
+    for item in r2.json().get("items", []):
+        if item.get("name") == name:
+            existing = item
+            break
+
+    if existing:
+        cid = existing["id"]
+        # 更新现有组件
+        payload = {
+            "name": name,
+            "type": type_,
+            "description": description,
+            "config_json": config_json,
+        }
+        if folder_id:
+            payload["folder_id"] = folder_id
+        r = requests.put(
+            f"{API_URL}/components/{cid}",
+            json=payload,
+            cookies=cookies,
+            timeout=10,
+        )
+        if r.status_code == 200:
+            print(f"[OK] 组件已更新: {name} (id={cid})")
+            return cid
+        print(f"[WARN] 更新组件失败 [{name}]: {r.status_code} {r.text}")
+        return cid
+
+    # 创建新组件
     payload = {
         "name": name,
         "type": type_,
@@ -230,24 +267,25 @@ def create_component(cookies, name: str, type_: str, description: str, config_js
         cid = r.json().get("id")
         print(f"[OK] 组件已创建: {name} (id={cid})")
         return cid
-    elif r.status_code == 409:
-        # 查找已存在
-        r2 = requests.get(
-            f"{API_URL}/components",
-            params={"type": type_, "keyword": name},
-            cookies=cookies,
-            timeout=10,
-        )
-        for item in r2.json().get("items", []):
-            if item.get("name") == name:
-                print(f"[OK] 组件已存在: {name} (id={item['id']})")
-                return item["id"]
     print(f"[ERROR] 创建组件失败 [{name}]: {r.status_code} {r.text}")
     return 0
 
 
 def create_workflow(cookies, name: str, description: str, dag_json: dict, cron: str = None) -> int:
-    """创建工作流"""
+    """创建或更新工作流（同名则更新配置）"""
+    # 先查找是否已存在同名工作流
+    r2 = requests.get(
+        f"{API_URL}/workflows",
+        params={"keyword": name, "page_size": 50},
+        cookies=cookies,
+        timeout=10,
+    )
+    existing = None
+    for item in r2.json().get("items", []):
+        if item.get("name") == name:
+            existing = item
+            break
+
     payload = {
         "name": name,
         "description": description,
@@ -255,6 +293,20 @@ def create_workflow(cookies, name: str, description: str, dag_json: dict, cron: 
     }
     if cron:
         payload["cron_expression"] = cron
+
+    if existing:
+        wid = existing["id"]
+        r = requests.put(
+            f"{API_URL}/workflows/{wid}",
+            json=payload,
+            cookies=cookies,
+            timeout=10,
+        )
+        if r.status_code == 200:
+            print(f"[OK] 工作流已更新: {name} (id={wid})")
+            return wid
+        print(f"[WARN] 更新工作流失败 [{name}]: {r.status_code} {r.text}")
+        return wid
 
     r = requests.post(
         f"{API_URL}/workflows",
@@ -266,17 +318,6 @@ def create_workflow(cookies, name: str, description: str, dag_json: dict, cron: 
         wid = r.json().get("id")
         print(f"[OK] 工作流已创建: {name} (id={wid})")
         return wid
-    elif r.status_code == 409:
-        r2 = requests.get(
-            f"{API_URL}/workflows",
-            params={"keyword": name},
-            cookies=cookies,
-            timeout=10,
-        )
-        for item in r2.json().get("items", []):
-            if item.get("name") == name:
-                print(f"[OK] 工作流已存在: {name} (id={item['id']})")
-                return item["id"]
     print(f"[ERROR] 创建工作流失败 [{name}]: {r.status_code} {r.text}")
     return 0
 
