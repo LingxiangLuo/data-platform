@@ -1,5 +1,64 @@
 services:
   # ============================================
+  # Demo MySQL 8.0 - 电商业务源库 (演示/测试用)
+  # ============================================
+  demo-mysql:
+    image: mysql:8.0
+    container_name: dmp-demo-mysql
+    restart: always
+    env_file: .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: demo_ecommerce
+      MYSQL_CHARACTER_SET_SERVER: utf8mb4
+      MYSQL_COLLATION_SERVER: utf8mb4_unicode_ci
+    expose:
+      - "3306"
+    volumes:
+      - demo_mysql_data:/var/lib/mysql
+      - ./demo/init-mysql.sql:/docker-entrypoint-initdb.d/01-init.sql
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max-connections=100
+      --innodb-buffer-pool-size=128M
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 512m
+    networks:
+      - dmp-net
+
+  # ============================================
+  # Demo PostgreSQL 15 - 数仓目标库 (演示/测试用)
+  # ============================================
+  demo-postgres:
+    image: postgres:15-alpine
+    container_name: dmp-demo-postgres
+    restart: always
+    env_file: .env
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      POSTGRES_DB: demo_dw
+    expose:
+      - "5432"
+    volumes:
+      - demo_postgres_data:/var/lib/postgresql/data
+      - ./demo/init-postgres.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d demo_dw || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 256m
+    networks:
+      - dmp-net
+
+  # ============================================
   # MySQL 8.0 - 元数据库 (不对外暴露端口)
   # ============================================
   mysql:
@@ -239,6 +298,8 @@ volumes:
   es_data:
   nginx_logs:
   frontend_dist:
+  demo_mysql_data:
+  demo_postgres_data:
 
 networks:
   dmp-net:
