@@ -89,7 +89,8 @@ def wait_for_api(timeout: int = 120):
     while time.time() - start < timeout:
         try:
             r = requests.get(f"{API_URL}/dashboard/stats", timeout=5)
-            if r.status_code == 200:
+            # 200 表示已登录，401/403 表示服务已就绪但需要登录
+            if r.status_code in (200, 401, 403):
                 print("[INFO] 后端 API 已就绪")
                 return True
         except Exception:
