@@ -221,7 +221,7 @@
             v-model="config.field_mapping"
             :source-columns="sourceColumns"
             :target-columns="targetColumns"
-            :enable-auto-create="!!config.target_id && !!config.target_table"
+            :enable-auto-create="targetIsSql && !!config.target_id && !!config.target_table"
             :readonly="isOnline"
             @auto-create-table="handleAutoCreateTable"
           />
@@ -340,6 +340,10 @@ const sourceTableOptions = ref<string[]>([])
 const targetTableOptions = ref<string[]>([])
 
 const isOnline = computed(() => comp.value?.status === 'online')
+const targetIsSql = computed(() => {
+  const t = datasources.value.find((d: any) => d.id === config.target_id)?.type || ''
+  return ['mysql', 'postgresql', 'sqlserver', 'oracle', 'clickhouse'].includes(t.toLowerCase())
+})
 const toggling = ref(false)
 const saving = ref(false)
 const previewing = ref(false)
@@ -352,6 +356,8 @@ const jsonError = ref('')
 
 const ddlModalVisible = ref(false)
 const ddlText = ref('')
+const ddlStatements = ref<string[]>([])
+const ddlGenerating = ref(false)
 const ddlExecuting = ref(false)
 
 const dsFilter = (input: string, opt: any) => {
@@ -641,6 +647,7 @@ async function handleAutoCreateTable() {
     Message.warning('未获取到源表字段，无法推断建表 SQL')
     return
   }
+  ddlGenerating.value = true
   try {
     const res: any = await generateDDL({
       datasource_id: config.target_id,
@@ -651,18 +658,26 @@ async function handleAutoCreateTable() {
       })),
     })
     ddlText.value = res.ddl || ''
+    ddlStatements.value = Array.isArray(res.statements) ? res.statements : [res.ddl]
     ddlModalVisible.value = true
-  } catch {}
+  } catch {} finally {
+    ddlGenerating.value = false
+  }
 }
 
 async function confirmExecuteDDL() {
   if (!ddlText.value.trim()) return
   ddlExecuting.value = true
   try {
-    const res: any = await executeDDL({ datasource_id: config.target_id!, ddl: ddlText.value })
+    const res: any = await executeDDL({
+      datasource_id: config.target_id!,
+      ddl: ddlText.value,
+      statements: ddlStatements.value,
+    })
     if (res.ok) {
       Message.success(res.message || '建表成功')
       ddlModalVisible.value = false
+      config.field_mapping = []
       await loadTargetColumns()
     } else {
       Message.error(res.message || '建表失败')

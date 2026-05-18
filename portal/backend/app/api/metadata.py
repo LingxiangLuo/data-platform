@@ -401,67 +401,203 @@ class GenerateDDLRequest(BaseModel):
 
 class ExecuteDDLRequest(BaseModel):
     datasource_id: int
-    ddl: str
+    ddl: Optional[str] = None
+    statements: Optional[List[str]] = None
 
 
-def _generate_ddl_sql(db_type: str, table: str, columns: List[DDLColumn]) -> str:
-    """根据数据库类型生成 CREATE TABLE DDL"""
+# ---- 跨库类型映射 ----
+_TYPE_MAP: Dict[str, Dict[str, str]] = {
+    # 归一化后的源类型 -> 各目标数据库类型
+    "mysql": {
+        "boolean": "TINYINT(1)", "tinyint": "TINYINT", "smallint": "SMALLINT",
+        "int": "INT", "integer": "INT", "bigint": "BIGINT",
+        "float": "FLOAT", "double": "DOUBLE", "real": "DOUBLE",
+        "decimal": "DECIMAL(18,2)", "numeric": "DECIMAL(18,2)",
+        "varchar": "VARCHAR(255)", "char": "CHAR(50)", "text": "TEXT",
+        "mediumtext": "TEXT", "longtext": "LONGTEXT",
+        "datetime": "DATETIME", "timestamp": "TIMESTAMP", "date": "DATE", "time": "TIME",
+        "json": "JSON", "jsonb": "JSON", "blob": "BLOB",
+        "serial": "INT AUTO_INCREMENT", "bigserial": "BIGINT AUTO_INCREMENT",
+    },
+    "postgresql": {
+        "boolean": "BOOLEAN", "tinyint": "SMALLINT", "smallint": "SMALLINT",
+        "int": "INTEGER", "integer": "INTEGER", "bigint": "BIGINT",
+        "float": "REAL", "double": "DOUBLE PRECISION", "real": "REAL",
+        "decimal": "NUMERIC(18,2)", "numeric": "NUMERIC(18,2)",
+        "varchar": "VARCHAR(255)", "char": "CHAR(50)", "text": "TEXT",
+        "mediumtext": "TEXT", "longtext": "TEXT",
+        "datetime": "TIMESTAMP", "timestamp": "TIMESTAMP", "date": "DATE", "time": "TIME",
+        "json": "JSONB", "jsonb": "JSONB", "blob": "BYTEA",
+        "serial": "SERIAL", "bigserial": "BIGSERIAL",
+    },
+    "sqlserver": {
+        "boolean": "BIT", "tinyint": "TINYINT", "smallint": "SMALLINT",
+        "int": "INT", "integer": "INT", "bigint": "BIGINT",
+        "float": "FLOAT", "double": "FLOAT", "real": "REAL",
+        "decimal": "DECIMAL(18,2)", "numeric": "DECIMAL(18,2)",
+        "varchar": "NVARCHAR(255)", "char": "NCHAR(50)", "text": "NVARCHAR(MAX)",
+        "mediumtext": "NVARCHAR(MAX)", "longtext": "NVARCHAR(MAX)",
+        "datetime": "DATETIME2", "timestamp": "DATETIME2", "date": "DATE", "time": "TIME",
+        "json": "NVARCHAR(MAX)", "jsonb": "NVARCHAR(MAX)", "blob": "VARBINARY(MAX)",
+        "serial": "INT IDENTITY(1,1)", "bigserial": "BIGINT IDENTITY(1,1)",
+    },
+    "oracle": {
+        "boolean": "NUMBER(1)", "tinyint": "NUMBER(3)", "smallint": "NUMBER(5)",
+        "int": "NUMBER(10)", "integer": "NUMBER(10)", "bigint": "NUMBER(19)",
+        "float": "BINARY_FLOAT", "double": "BINARY_DOUBLE", "real": "BINARY_FLOAT",
+        "decimal": "NUMBER(18,2)", "numeric": "NUMBER(18,2)",
+        "varchar": "VARCHAR2(255)", "char": "CHAR(50)", "text": "CLOB",
+        "mediumtext": "CLOB", "longtext": "CLOB",
+        "datetime": "TIMESTAMP", "timestamp": "TIMESTAMP", "date": "DATE", "time": "TIMESTAMP",
+        "json": "CLOB", "jsonb": "CLOB", "blob": "BLOB",
+        "serial": "NUMBER(10)", "bigserial": "NUMBER(19)",
+    },
+    "clickhouse": {
+        "boolean": "UInt8", "tinyint": "Int8", "smallint": "Int16",
+        "int": "Int32", "integer": "Int32", "bigint": "Int64",
+        "float": "Float32", "double": "Float64", "real": "Float32",
+        "decimal": "Decimal(18,2)", "numeric": "Decimal(18,2)",
+        "varchar": "String", "char": "String", "text": "String",
+        "mediumtext": "String", "longtext": "String",
+        "datetime": "DateTime", "timestamp": "DateTime", "date": "Date", "time": "DateTime",
+        "json": "String", "jsonb": "String", "blob": "String",
+        "serial": "Int32", "bigserial": "Int64",
+    },
+}
+
+
+def _normalize_type(src_type: str) -> str:
+    """将源类型字符串归一化为小写核心类型名（不含长度参数）"""
+    if not src_type:
+        return "varchar"
+    s = src_type.lower().strip()
+    # 去掉长度参数，如 int(11) -> int, varchar(255) -> varchar, decimal(10,2) -> decimal
+    import re
+    m = re.match(r"^(\w+)", s)
+    base = m.group(1) if m else s
+    # MySQL 特有映射
+    if "tinyint(1)" in s:
+        return "boolean"
+    if base in ("int", "integer"):
+        return "int"
+    if base in ("varchar", "character varying"):
+        return "varchar"
+    if base in ("timestamp", "timestamp without time zone", "timestamp with time zone"):
+        return "timestamp"
+    if base in ("numeric", "decimal"):
+        return "decimal"
+    if base in ("double", "double precision"):
+        return "double"
+    if base in ("json", "jsonb"):
+        return "json" if base == "json" else "jsonb"
+    if base in ("mediumtext", "longtext"):
+        return "text"
+    if base in ("serial", "bigserial"):
+        return base
+    return base
+
+
+def _map_column_type(src_type: str, target_db: str) -> str:
+    """将源列类型映射到目标数据库的等价类型"""
+    t = target_db.lower()
+    normalized = _normalize_type(src_type)
+    mapping = _TYPE_MAP.get(t, _TYPE_MAP["mysql"])
+    return mapping.get(normalized, mapping.get("varchar", "VARCHAR(255)"))
+
+
+def _quote_identifier(name: str, db_type: str) -> str:
+    """根据数据库类型引用标识符"""
+    t = db_type.lower()
+    if t == "sqlserver":
+        return f"[{name}]"
+    if t == "oracle":
+        return f'"{name.upper()}"'
+    if t in ("postgresql", "clickhouse"):
+        return f'"{name}"'
+    return f"`{name}`"
+
+
+def _quote_table(table: str, db_type: str) -> str:
+    """引用表名"""
+    t = db_type.lower()
+    if t == "mysql":
+        return f"`{table}`"
+    if t == "sqlserver":
+        return f"[{table}]"
+    if t == "oracle":
+        return f'"{table.upper()}"'
+    if t in ("postgresql", "clickhouse"):
+        return f'"{table}"'
+    return f"`{table}`"
+
+
+def _generate_ddl_sql(db_type: str, table: str, columns: List[DDLColumn]) -> List[str]:
+    """根据数据库类型生成 CREATE TABLE DDL 语句列表"""
     if not columns:
         raise HTTPException(status_code=400, detail="字段列表不能为空")
     t = db_type.lower()
 
-    def _quote(name: str) -> str:
-        if t == "sqlserver":
-            return f"[{name}]"
-        if t == "oracle":
-            return f'"{name.upper()}"'
-        if t == "postgresql":
-            return f'"{name}"'
-        return f"`{name}`"
-
     lines: List[str] = []
     pk_cols: List[str] = []
     for c in columns:
-        ctype = c.type or ("VARCHAR2(255)" if t == "oracle" else "varchar(255)")
+        ctype = _map_column_type(c.type, t)
         null_part = "NULL" if c.nullable else "NOT NULL"
         comment_part = ""
         if c.comment:
-            safe_comment = c.comment.replace("'", "''")  # 转义单引号防 SQL 注入
-            if t == "oracle":
-                comment_part = ""  # Oracle comment 单独加
-            else:
+            safe_comment = c.comment.replace("'", "''")
+            if t != "oracle":
                 comment_part = f" COMMENT '{safe_comment}'"
-        lines.append(f"  {_quote(c.name)} {ctype} {null_part}{comment_part}")
+        lines.append(f"  {_quote_identifier(c.name, t)} {ctype} {null_part}{comment_part}")
         if c.primary_key:
-            pk_cols.append(_quote(c.name))
+            pk_cols.append(_quote_identifier(c.name, t))
 
     if pk_cols:
         lines.append(f"  PRIMARY KEY ({', '.join(pk_cols)})")
 
+    statements: List[str] = []
     if t == "mysql":
-        return (
-            f"CREATE TABLE IF NOT EXISTS `{table}` (\n"
+        statements.append(
+            f"CREATE TABLE IF NOT EXISTS {_quote_table(table, t)} (\n"
             + ",\n".join(lines) + "\n"
-            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;"
+            ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
         )
-    if t == "postgresql":
-        return f"CREATE TABLE IF NOT EXISTS {table} (\n" + ",\n".join(lines) + "\n);"
-    if t == "sqlserver":
-        return f"IF OBJECT_ID('{table}', 'U') IS NULL\nCREATE TABLE {table} (\n" + ",\n".join(lines) + "\n);"
-    if t == "oracle":
-        ddl = f"CREATE TABLE {table} (\n" + ",\n".join(lines) + "\n);"
-        # Oracle comment 单独执行
-        comments = [
-            f"COMMENT ON COLUMN {table}.{_quote(c.name)} IS '{c.comment.replace(chr(39), chr(39)+chr(39))}'"
-            for c in columns if c.comment
-        ]
-        if comments:
-            ddl += "\n" + ";\n".join(comments) + ";"
-        return ddl
-    if t == "clickhouse":
-        return f"CREATE TABLE IF NOT EXISTS {table} (\n" + ",\n".join(lines) + "\n) ENGINE=MergeTree() ORDER BY " + (", ".join(pk_cols) if pk_cols else "tuple()") + ";"
-    # 默认 MySQL 风格
-    return f"CREATE TABLE IF NOT EXISTS `{table}` (\n" + ",\n".join(lines) + "\n);"
+    elif t == "postgresql":
+        statements.append(
+            f"CREATE TABLE IF NOT EXISTS {_quote_table(table, t)} (\n"
+            + ",\n".join(lines) + "\n)"
+        )
+    elif t == "sqlserver":
+        statements.append(
+            f"IF OBJECT_ID('{table}', 'U') IS NULL\n"
+            f"CREATE TABLE {_quote_table(table, t)} (\n"
+            + ",\n".join(lines) + "\n)"
+        )
+    elif t == "oracle":
+        statements.append(
+            f"CREATE TABLE {_quote_table(table, t)} (\n"
+            + ",\n".join(lines) + "\n)"
+        )
+        # Oracle comment 单独语句
+        for c in columns:
+            if c.comment:
+                safe = c.comment.replace("'", "''")
+                statements.append(
+                    f"COMMENT ON COLUMN {_quote_table(table, t)}.{_quote_identifier(c.name, t)} IS '{safe}'"
+                )
+    elif t == "clickhouse":
+        order_by = ", ".join(pk_cols) if pk_cols else "tuple()"
+        statements.append(
+            f"CREATE TABLE IF NOT EXISTS {_quote_table(table, t)} (\n"
+            + ",\n".join(lines)
+            + f"\n) ENGINE=MergeTree() ORDER BY {order_by}"
+        )
+    else:
+        # 默认 MySQL 风格
+        statements.append(
+            f"CREATE TABLE IF NOT EXISTS {_quote_table(table, t)} (\n"
+            + ",\n".join(lines) + "\n)"
+        )
+    return statements
 
 
 @router.post("/generate-ddl")
@@ -474,11 +610,19 @@ def generate_ddl(
     ds = _get_ds_or_404(db, req.datasource_id)
     if not check_resource_permission(db, current_user, "datasource", req.datasource_id, "read"):
         raise HTTPException(status_code=404, detail="数据源不存在")
+    t = (ds.type or "").lower()
+    if t in ("mongodb", "redis"):
+        raise HTTPException(status_code=400, detail="该数据源类型不支持一键建表")
     import re
     if not re.fullmatch(r"[A-Za-z0-9_]+", req.target_table):
         raise HTTPException(status_code=400, detail="表名格式非法：仅允许字母、数字和下划线")
-    ddl = _generate_ddl_sql(ds.type or "mysql", req.target_table, req.columns)
-    return {"datasource_id": ds.id, "target_table": req.target_table, "ddl": ddl}
+    statements = _generate_ddl_sql(t or "mysql", req.target_table, req.columns)
+    return {
+        "datasource_id": ds.id,
+        "target_table": req.target_table,
+        "ddl": ";\n".join(statements),
+        "statements": statements,
+    }
 
 
 @router.post("/execute-ddl")
@@ -487,31 +631,45 @@ def execute_ddl(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    """执行 DDL（只接受 CREATE TABLE 语句以减少风险）"""
+    """执行 DDL（接受 statements 列表逐条执行，兼容旧版单条 ddl 字符串）"""
     ds = _get_ds_or_404(db, req.datasource_id)
     if not check_resource_permission(db, current_user, "datasource", req.datasource_id, "write"):
         raise HTTPException(status_code=404, detail="数据源不存在")
-    sql = (req.ddl or "").strip()
-    # 严格校验：只允许 CREATE TABLE IF NOT EXISTS，禁止分号防多语句
-    if ";" in sql:
-        raise HTTPException(status_code=400, detail="DDL 中不允许包含分号")
-    head = sql.lstrip().upper()
-    if not head.startswith("CREATE TABLE IF NOT EXISTS"):
-        raise HTTPException(status_code=400, detail="仅允许 CREATE TABLE IF NOT EXISTS 语句")
+    t = (ds.type or "").lower()
+
+    # 优先使用 statements 列表，fallback 到单条 ddl
+    if req.statements:
+        stmts = [s.strip() for s in req.statements if s.strip()]
+    elif req.ddl:
+        stmts = [req.ddl.strip()]
+    else:
+        raise HTTPException(status_code=400, detail="缺少 DDL 内容")
+
+    if not stmts:
+        raise HTTPException(status_code=400, detail="DDL 内容不能为空")
+
+    # 校验每条语句
+    for sql in stmts:
+        head = sql.lstrip().upper()
+        allowed = any(head.startswith(prefix) for prefix in ("CREATE TABLE", "COMMENT ON COLUMN"))
+        if not allowed:
+            raise HTTPException(status_code=400, detail=f"不允许的语句: {sql[:60]}...")
+
     try:
         import sqlalchemy as sa
         from app.core.db_adapter import sqlalchemy_url
-        connect_args = {"connect_timeout": 10} if (ds.type or "").lower() in ("mysql", "postgresql") else {}
+        connect_args = {"connect_timeout": 10} if t in ("mysql", "postgresql") else {}
         engine = sa.create_engine(sqlalchemy_url(ds), pool_pre_ping=True, connect_args=connect_args)
         with engine.connect() as conn:
-            conn.execute(sa.text(sql.rstrip(";")))
+            for sql in stmts:
+                conn.execute(sa.text(sql.rstrip(";")))
             conn.commit()
         engine.dispose()
-        return {"ok": True, "message": "建表成功"}
-    except Exception:
+        return {"ok": True, "message": f"建表成功（共执行 {len(stmts)} 条语句）"}
+    except Exception as e:
         import logging
         logging.getLogger(__name__).error("建表失败", exc_info=True)
-        raise HTTPException(status_code=502, detail="建表失败，请检查 DDL 语法或数据源连接")
+        raise HTTPException(status_code=502, detail=f"建表失败：{e}")
 
 
 # ===== 统计 =====

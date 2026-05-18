@@ -121,7 +121,7 @@ export const getMetadataPreview = (datasource_id: number, table: string, limit =
 export const getMetadataQuality = (datasource_id: number, table: string) => api.get('/metadata/quality', { params: { datasource_id, table } })
 export const generateDDL = (data: { datasource_id: number; target_table: string; columns: any[] }) =>
   api.post('/metadata/generate-ddl', data)
-export const executeDDL = (data: { datasource_id: number; ddl: string }) =>
+export const executeDDL = (data: { datasource_id: number; ddl?: string; statements?: string[] }) =>
   api.post('/metadata/execute-ddl', data)
 
 // Notifications
