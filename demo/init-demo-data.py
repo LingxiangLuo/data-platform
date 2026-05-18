@@ -123,9 +123,10 @@ def login() -> str:
 
 def create_datasource(cookies, ds_config: dict, password: str) -> int:
     """创建数据源，返回 id"""
+    # 注意：后端会自动加密密码，这里发送明文即可
     payload = {
         **ds_config,
-        "password": encrypt_password(password),
+        "password": password,
     }
     r = requests.post(
         f"{API_URL}/datasources",
@@ -136,14 +137,46 @@ def create_datasource(cookies, ds_config: dict, password: str) -> int:
     if r.status_code == 200:
         ds_id = r.json().get("id")
         print(f"[OK] 数据源已创建: {ds_config['name']} (id={ds_id})")
+        # 自动测试连接，更新状态
+        r_test = requests.post(
+            f"{API_URL}/datasources/{ds_id}/test",
+            cookies=cookies,
+            timeout=15,
+        )
+        if r_test.status_code == 200:
+            test_res = r_test.json()
+            status_label = "正常" if test_res.get("status") == 1 else "不可用"
+            print(f"  [TEST] 连接测试: {test_res.get('message', '')} ({status_label})")
+        else:
+            print(f"  [WARN] 连接测试失败: {r_test.status_code}")
         return ds_id
     elif r.status_code == 409 or "已存在" in r.text:
         # 尝试查找已存在的数据源
         r2 = requests.get(f"{API_URL}/datasources", cookies=cookies, timeout=10)
         for item in r2.json().get("items", []):
             if item.get("name") == ds_config["name"]:
-                print(f"[OK] 数据源已存在: {ds_config['name']} (id={item['id']})")
-                return item["id"]
+                ds_id = item["id"]
+                print(f"[OK] 数据源已存在: {ds_config['name']} (id={ds_id})")
+                # 更新密码（后端会自动重新加密）
+                r_upd = requests.put(
+                    f"{API_URL}/datasources/{ds_id}",
+                    json={"password": password},
+                    cookies=cookies,
+                    timeout=10,
+                )
+                if r_upd.status_code == 200:
+                    print(f"  [UPD] 密码已更新")
+                # 重新测试连接
+                r_test = requests.post(
+                    f"{API_URL}/datasources/{ds_id}/test",
+                    cookies=cookies,
+                    timeout=15,
+                )
+                if r_test.status_code == 200:
+                    test_res = r_test.json()
+                    status_label = "正常" if test_res.get("status") == 1 else "不可用"
+                    print(f"  [TEST] 连接测试: {test_res.get('message', '')} ({status_label})")
+                return ds_id
     print(f"[ERROR] 创建数据源失败: {r.status_code} {r.text}")
     return 0
 
