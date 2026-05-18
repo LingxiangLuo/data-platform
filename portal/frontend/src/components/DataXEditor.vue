@@ -477,9 +477,7 @@ async function loadTargetColumns() {
     const res: any = await getMetadataColumns(config.target_id, config.target_table)
     targetColumns.value = res.columns || []
   } catch (e: any) {
-    targetColumns.value = []
-    const msg = e?.response?.data?.detail || '读取目标表字段失败'
-    Message.error(msg)
+    // API 拦截器已显示错误提示，这里不再重复；也不清空 targetColumns，保留推断值
     throw e
   }
 }

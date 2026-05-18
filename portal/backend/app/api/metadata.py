@@ -149,11 +149,18 @@ def list_columns_api(
                     c["foreign_key"] = True
 
         elif t == "postgresql":
+            # PostgreSQL 的 information_schema 中 table_schema 是 schema 名，不是数据库名
+            pg_schema = schema
+            if not pg_schema:
+                cur.execute("SELECT current_schema()")
+                row = cur.fetchone()
+                pg_schema = row[0] if row and row[0] else "public"
+
             cur.execute(
                 "SELECT column_name, data_type, is_nullable "
                 "FROM information_schema.columns "
                 "WHERE table_schema=%s AND table_name=%s ORDER BY ordinal_position",
-                (db_name, tbl),
+                (pg_schema, tbl),
             )
             for r in cur.fetchall():
                 columns.append({
@@ -174,7 +181,7 @@ def list_columns_api(
                 "JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name "
                 "AND tc.table_schema=kcu.table_schema WHERE tc.constraint_type='PRIMARY KEY' "
                 "AND tc.table_schema=%s AND tc.table_name=%s",
-                (db_name, tbl),
+                (pg_schema, tbl),
             )
             for r in cur.fetchall():
                 if r[0] in col_map:
@@ -185,7 +192,7 @@ def list_columns_api(
                 "JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name "
                 "AND tc.table_schema=kcu.table_schema WHERE tc.constraint_type='UNIQUE' "
                 "AND tc.table_schema=%s AND tc.table_name=%s",
-                (db_name, tbl),
+                (pg_schema, tbl),
             )
             for r in cur.fetchall():
                 if r[0] in col_map:
@@ -196,7 +203,7 @@ def list_columns_api(
                 "JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name "
                 "AND tc.table_schema=kcu.table_schema WHERE tc.constraint_type='FOREIGN KEY' "
                 "AND tc.table_schema=%s AND tc.table_name=%s",
-                (db_name, tbl),
+                (pg_schema, tbl),
             )
             for r in cur.fetchall():
                 if r[0] in col_map:
@@ -204,7 +211,7 @@ def list_columns_api(
             # 普通索引 (pg_indexes)
             cur.execute(
                 "SELECT indexdef FROM pg_indexes WHERE schemaname=%s AND tablename=%s",
-                (db_name, tbl),
+                (pg_schema, tbl),
             )
             import re
             for r in cur.fetchall():
@@ -218,7 +225,7 @@ def list_columns_api(
             cur.execute(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_schema=%s AND table_name=%s AND is_identity='YES'",
-                (db_name, tbl),
+                (pg_schema, tbl),
             )
             for r in cur.fetchall():
                 if r[0] in col_map:
