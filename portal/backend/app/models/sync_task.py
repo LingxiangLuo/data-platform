@@ -25,6 +25,7 @@ class SyncTask(Base):
     pre_sql = Column(Text, comment="导入前 SQL 列表 JSON 数组（目标库执行）")
     post_sql = Column(Text, comment="导入后 SQL 列表 JSON 数组（目标库执行）")
     ds_workflow_id = Column(BigInteger)
+    component_id = Column(BigInteger, comment="关联组件ID")
     status = Column(String(32), default="draft")
     last_run_time = Column(DateTime)
     last_run_status = Column(String(32))
