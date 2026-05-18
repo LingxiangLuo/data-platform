@@ -49,53 +49,68 @@ def _get_redis():
             return None
 
 
-def _check_login_rate(ip: str) -> None:
+# 按用户名（账户级）的登录失败记录
+_user_login_attempts: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_login_rate(ip: str, username: str = "") -> None:
+    """检查 IP 级和账户级登录速率限制"""
     r = _get_redis()
     now = time.time()
-    if r:
-        key = f"login_attempts:{ip}"
-        raw = r.get(key)
-        attempts = json.loads(raw) if raw else []
-        attempts = [t for t in attempts if now - t < settings.LOGIN_LOCKOUT_SECONDS]
+    window = settings.LOGIN_LOCKOUT_SECONDS
+
+    # IP 级检查
+    def _check(key: str, store: dict) -> None:
+        if r:
+            raw = r.get(key)
+            attempts = json.loads(raw) if raw else []
+        else:
+            with _login_lock:
+                attempts = store.get(key, [])
+        attempts = [t for t in attempts if now - t < window]
         if len(attempts) >= settings.LOGIN_MAX_ATTEMPTS:
-            retry_after = int(settings.LOGIN_LOCKOUT_SECONDS - (now - attempts[0]))
+            retry_after = int(window - (now - attempts[0]))
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=f"登录尝试过于频繁，请 {retry_after} 秒后再试",
             )
-    else:
-        with _login_lock:
-            attempts = [t for t in _login_attempts[ip] if now - t < settings.LOGIN_LOCKOUT_SECONDS]
-            _login_attempts[ip] = attempts
-            if len(attempts) >= settings.LOGIN_MAX_ATTEMPTS:
-                retry_after = int(settings.LOGIN_LOCKOUT_SECONDS - (now - attempts[0]))
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail=f"登录尝试过于频繁，请 {retry_after} 秒后再试",
-                )
+
+    _check(f"login_attempts:{ip}", _login_attempts)
+    if username:
+        _check(f"user_attempts:{username}", _user_login_attempts)
 
 
-def _record_failed_login(ip: str) -> None:
+def _record_failed_login(ip: str, username: str = "") -> None:
     r = _get_redis()
     now = time.time()
-    if r:
-        key = f"login_attempts:{ip}"
-        raw = r.get(key)
-        attempts = json.loads(raw) if raw else []
-        attempts.append(now)
-        r.setex(key, settings.LOGIN_LOCKOUT_SECONDS, json.dumps(attempts))
-    else:
-        with _login_lock:
-            _login_attempts[ip].append(now)
+    window = settings.LOGIN_LOCKOUT_SECONDS
+
+    def _store(key: str, store: dict) -> None:
+        if r:
+            raw = r.get(key)
+            attempts = json.loads(raw) if raw else []
+            attempts.append(now)
+            r.setex(key, window, json.dumps(attempts))
+        else:
+            with _login_lock:
+                store.setdefault(key, []).append(now)
+
+    _store(f"login_attempts:{ip}", _login_attempts)
+    if username:
+        _store(f"user_attempts:{username}", _user_login_attempts)
 
 
-def _clear_login_attempts(ip: str) -> None:
+def _clear_login_attempts(ip: str, username: str = "") -> None:
     r = _get_redis()
     if r:
         r.delete(f"login_attempts:{ip}")
+        if username:
+            r.delete(f"user_attempts:{username}")
     else:
         with _login_lock:
             _login_attempts.pop(ip, None)
+            if username:
+                _user_login_attempts.pop(username, None)
 
 
 class LoginRequest(BaseModel):
@@ -114,19 +129,37 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+def _check_password_strength(password: str) -> None:
+    """密码复杂度校验：8-128 位，包含大小写字母和数字"""
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="密码长度至少 8 位")
+    if len(password) > 128:
+        raise HTTPException(status_code=400, detail="密码长度不能超过 128 位")
+    if not any(c.isupper() for c in password):
+        raise HTTPException(status_code=400, detail="密码必须包含至少一个大写字母")
+    if not any(c.islower() for c in password):
+        raise HTTPException(status_code=400, detail="密码必须包含至少一个小写字母")
+    if not any(c.isdigit() for c in password):
+        raise HTTPException(status_code=400, detail="密码必须包含至少一个数字")
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(req: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     client_ip = request.client.host if request.client else "unknown"
-    _check_login_rate(client_ip)
+    _check_login_rate(client_ip, req.username)
+
+    # 防御超长密码 DoS：bcrypt 计算成本随输入长度增加
+    if len(req.password) > 128:
+        raise HTTPException(status_code=400, detail="密码长度不能超过 128 位")
 
     user = db.query(SysUser).filter(SysUser.username == req.username).first()
     if not user or not verify_password(req.password, user.password):
-        _record_failed_login(client_ip)
+        _record_failed_login(client_ip, req.username)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
     if user.status != 1:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已禁用")
 
-    _clear_login_attempts(client_ip)
+    _clear_login_attempts(client_ip, req.username)
 
     token = create_access_token(data={"sub": user.username})
     # 同时设置 httponly cookie，前端 axios withCredentials 可自动携带
@@ -151,7 +184,16 @@ def login(req: LoginRequest, request: Request, response: Response, db: Session =
 
 
 @router.post("/logout")
-def logout(response: Response):
+def logout(response: Response, request: Request):
+    # 将当前 token 加入黑名单，防止注销后的 token 继续使用
+    token = request.cookies.get(_COOKIE_NAME)
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:]
+    if token:
+        from app.core.security import add_to_blacklist
+        add_to_blacklist(token)
     response.delete_cookie(_COOKIE_NAME, httponly=True, samesite="lax")
     return {"ok": True}
 
@@ -199,6 +241,7 @@ def change_password(
 ):
     if not verify_password(req.old_password, current_user.password):
         raise HTTPException(status_code=400, detail="旧密码错误")
+    _check_password_strength(req.new_password)
     current_user.password = hash_password(req.new_password)
     db.commit()
     return {"message": "密码修改成功"}

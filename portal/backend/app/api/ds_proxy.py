@@ -520,8 +520,8 @@ async def ds_monitor(current_user: SysUser = Depends(get_current_user)):
 
 
 @router.get("/health")
-async def ds_health():
-    """DS 健康检查（无需认证，供内部调用）"""
+async def ds_health(current_user: SysUser = Depends(get_current_user)):
+    """DS 健康检查"""
     ds = _ds()
     healthy = await ds.healthy()
     return {"healthy": healthy}

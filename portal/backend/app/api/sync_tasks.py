@@ -199,16 +199,18 @@ def delete_task(
         raise HTTPException(status_code=404, detail="任务不存在")
 
     # 清理关联的 datax Component（及其引用的 Workflow）
-    comps = db.query(Component).filter(Component.type == "datax").all()
+    comps = db.query(Component).filter(
+        Component.type == "datax",
+        Component.config_json.contains(f'"sync_task_id": {task_id}'),
+    ).all()
     for comp in comps:
-        if (comp.config_json or {}).get("sync_task_id") == task_id:
-            # 删除引用该组件的 Workflow
-            wfs = db.query(Workflow).all()
-            for wf in wfs:
-                steps = wf.steps_json or []
-                if any(s.get("component_id") == comp.id for s in steps):
-                    db.delete(wf)
-            db.delete(comp)
+        # 删除引用该组件的 Workflow
+        wfs = db.query(Workflow).filter(
+            Workflow.steps_json.contains(f'"component_id": {comp.id}'),
+        ).all()
+        for wf in wfs:
+            db.delete(wf)
+        db.delete(comp)
 
     db.delete(task)
     db.commit()

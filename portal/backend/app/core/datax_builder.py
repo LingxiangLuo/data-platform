@@ -3,8 +3,10 @@
 把 Portal 的同步任务模型翻译为 DataX 引擎能直接消费的 job.json。
 v1 支持 MySQL ↔ MySQL，后续可扩展 PostgreSQL/Hive/Oracle。
 """
+import re
 from typing import List, Dict, Any, Optional
 
+from app.core.encrypt import decrypt_password
 from app.models.datasource import DataSource
 
 
@@ -35,7 +37,7 @@ def _jdbc_url(ds: DataSource) -> str:
     """构造 JDBC URL"""
     t = (ds.type or "").lower()
     if t == "mysql":
-        return f"jdbc:mysql://{ds.host}:{ds.port}/{ds.database_name}?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai"
+        return f"jdbc:mysql://{ds.host}:{ds.port}/{ds.database_name}?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai"
     if t == "postgresql":
         return f"jdbc:postgresql://{ds.host}:{ds.port}/{ds.database_name}"
     if t == "oracle":
@@ -129,9 +131,10 @@ def build_datax_job(
         raise ValueError("字段映射无有效项")
 
     def _pw(p: Optional[str]) -> str:
-        if not p:
+        plain = decrypt_password(p) or ""
+        if not plain:
             return ""
-        return "******" if mask_password else p
+        return "******" if mask_password else plain
 
     # ---- reader ----
     reader_param: Dict[str, Any] = {
@@ -150,6 +153,16 @@ def build_datax_job(
 
     # WHERE：用户自定义 > 增量自动生成
     final_where = where_clause
+    if final_where:
+        w = final_where.strip()
+        if ";" in w:
+            raise ValueError("WHERE 条件中不允许包含分号")
+        if "--" in w or "/*" in w:
+            raise ValueError("WHERE 条件中不允许包含注释")
+        w_upper = w.upper()
+        for kw in ("SELECT", "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "UNION", "EXEC", "EXECUTE"):
+            if re.search(rf"\b{kw}\b", w_upper):
+                raise ValueError(f"WHERE 条件中不允许包含关键字: {kw}")
     if not final_where and sync_type == "increment":
         if not increment_column:
             raise ValueError("增量同步必须指定 increment_column 或 where_clause")

@@ -9,17 +9,23 @@
 """
 from typing import List, Dict, Any, Optional, Tuple
 
+from app.core.encrypt import decrypt_password
 from app.models.datasource import DataSource
+
+
+def _decrypted_password(ds: DataSource) -> str:
+    return decrypt_password(ds.password) or ""
 
 
 # ---- SQLAlchemy URL ----
 
 def sqlalchemy_url(ds: DataSource) -> str:
-    """生成 SQLAlchemy 连接 URL。
+    """生成 SQLAlchemy 连接 URL（含明文密码，仅用于实际连接）。
     不支持的类型抛 ValueError。
+    注意：切勿将返回值直接写入日志；需要脱敏 URL 请用 safe_sqlalchemy_url()。
     """
     t = (ds.type or "").lower()
-    pwd = ds.password or ""
+    pwd = _decrypted_password(ds)
     if t == "mysql":
         return f"mysql+pymysql://{ds.username}:{pwd}@{ds.host}:{ds.port}/{ds.database_name}?charset=utf8mb4"
     if t == "postgresql":
@@ -35,6 +41,25 @@ def sqlalchemy_url(ds: DataSource) -> str:
     raise ValueError(f"SQLAlchemy 不支持的数据源类型: {ds.type}")
 
 
+def safe_sqlalchemy_url(ds: DataSource) -> str:
+    """生成脱敏后的 SQLAlchemy URL（密码替换为 ***），可用于日志输出。"""
+    t = (ds.type or "").lower()
+    if t == "hive":
+        return f"hive://{ds.username}@{ds.host}:{ds.port}/{ds.database_name}"
+    safe = "SQLAlchemy"
+    if t == "mysql":
+        safe = f"mysql+pymysql://{ds.username}:***@{ds.host}:{ds.port}/{ds.database_name}"
+    elif t == "postgresql":
+        safe = f"postgresql+psycopg2://{ds.username}:***@{ds.host}:{ds.port}/{ds.database_name}"
+    elif t == "sqlserver":
+        safe = f"mssql+pymssql://{ds.username}:***@{ds.host}:{ds.port}/{ds.database_name}"
+    elif t == "oracle":
+        safe = f"oracle+oracledb://{ds.username}:***@{ds.host}:{ds.port}/?service_name={ds.database_name}"
+    elif t == "clickhouse":
+        safe = f"clickhouse+native://{ds.username}:***@{ds.host}:{ds.port}/{ds.database_name}"
+    return safe
+
+
 # ---- 原生连接 ----
 
 def _connect(ds: DataSource, db_override: Optional[str] = None):
@@ -44,58 +69,63 @@ def _connect(ds: DataSource, db_override: Optional[str] = None):
     t = (ds.type or "").lower()
     database = db_override or ds.database_name
 
+    pwd = _decrypted_password(ds)
     if t == "mysql":
         import pymysql
         return pymysql.connect(
             host=ds.host, port=ds.port or 3306, user=ds.username,
-            password=ds.password, database=database, connect_timeout=5,
+            password=pwd, database=database, connect_timeout=5,
             charset="utf8mb4",
         )
     if t == "postgresql":
         import psycopg2
         conn = psycopg2.connect(
             host=ds.host, port=ds.port or 5432, user=ds.username,
-            password=ds.password, dbname=database, connect_timeout=5,
+            password=pwd, dbname=database, connect_timeout=5,
         )
         # 设置 search_path 到当前数据库 schema，确保表查询能找到
         cur = conn.cursor()
-        cur.execute(f"SET search_path TO {database}, public")
+        # database 来自数据源配置，不是用户输入；使用标识符引用防止特殊字符
+        safe_db = "".join(c for c in database if c.isalnum() or c == "_")
+        if not safe_db:
+            safe_db = "public"
+        cur.execute(f'SET search_path TO "{safe_db}", public')
         cur.close()
         return conn
     if t == "sqlserver":
         import pymssql
         return pymssql.connect(
             server=ds.host, port=str(ds.port or 1433), user=ds.username,
-            password=ds.password, database=database, login_timeout=5,
+            password=pwd, database=database, login_timeout=5,
         )
     if t == "oracle":
         import oracledb
         return oracledb.connect(
-            user=ds.username, password=ds.password or "",
+            user=ds.username, password=pwd,
             dsn=f"{ds.host}:{ds.port or 1521}/{database}",
         )
     if t == "clickhouse":
         from clickhouse_driver import Client
         return Client(
             host=ds.host, port=ds.port or 9000,
-            user=ds.username or "default", password=ds.password or "",
+            user=ds.username or "default", password=pwd,
             database=database,
         )
     if t == "mongodb":
         from pymongo import MongoClient
-        uri = f"mongodb://{ds.username}:{ds.password}@{ds.host}:{ds.port or 27017}/{database}"
+        uri = f"mongodb://{ds.username}:{pwd}@{ds.host}:{ds.port or 27017}/{database}"
         return MongoClient(uri, serverSelectionTimeoutMS=5000)
     if t == "redis":
         import redis
         return redis.Redis(
-            host=ds.host, port=ds.port or 6379, password=ds.password or None,
+            host=ds.host, port=ds.port or 6379, password=pwd or None,
             decode_responses=True, socket_connect_timeout=5,
         )
     if t == "hive":
         from impala.dbapi import connect
         return connect(
             host=ds.host, port=ds.port or 10000, user=ds.username,
-            password=ds.password or "", database=database,
+            password=pwd, database=database,
             auth_mechanism="PLAIN", timeout=5,
         )
     raise ValueError(f"不支持的数据源类型: {ds.type}")
@@ -147,7 +177,13 @@ def test_connection(ds: DataSource, table: Optional[str] = None) -> Tuple[bool, 
                 pass
         return True, "连接成功"
     except Exception as e:
-        return False, f"连接失败: {e}"
+        import logging
+        logging.getLogger(__name__).error(f"数据源连接测试失败 ({ds.name}): {e}", exc_info=True)
+        # 对前端返回通用错误，不暴露内部细节
+        err_msg = "连接失败，请检查网络、账号密码或数据源配置"
+        if "timeout" in str(e).lower() or "connect" in str(e).lower():
+            err_msg = "连接超时，请检查网络或主机地址"
+        return False, err_msg
 
 
 def _table_exists_query(db_type: str, schema: str, table: str):
@@ -373,8 +409,11 @@ def list_columns(ds: DataSource, table: str, schema: Optional[str] = None) -> Li
                 for k, v in doc.items()
             ]
         if t == "hive":
+            import re
+            if not re.fullmatch(r"[A-Za-z0-9_]+", table):
+                raise ValueError(f"Hive 表名格式非法: {table}")
             cur = conn.cursor()
-            cur.execute(f"DESCRIBE {table}")
+            cur.execute(f"DESCRIBE `{table}`")
             return [
                 {"name": r[0], "type": r[1], "nullable": True, "comment": r[2] or ""}
                 for r in cur.fetchall()

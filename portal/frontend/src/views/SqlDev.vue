@@ -322,6 +322,8 @@ import {
 import SyncTaskCanvas from '../components/SyncTaskCanvas.vue'
 import SyncTaskWizard from '../components/SyncTaskWizard.vue'
 import { useUserStore } from '../stores/user'
+import type { ComponentItem, DatasourceItem, FolderItem, ProjectItem } from '../types/component'
+import { statusLabel, statusColor, manualStatusOptions } from '../types/component'
 
 const userStore = useUserStore()
 
@@ -351,10 +353,10 @@ const tabs = ref<Tab[]>([])
 const activeKey = ref('')
 const activeTab = computed<Tab | null>(() => tabs.value.find(t => t.key === activeKey.value) ?? null)
 
-const components = ref<any[]>([])
-const datasources = ref<any[]>([])
-const folders = ref<any[]>([])  // flat list from API
-const projects = ref<any[]>([])
+const components = ref<ComponentItem[]>([])
+const datasources = ref<DatasourceItem[]>([])
+const folders = ref<FolderItem[]>([])  // flat list from API
+const projects = ref<ProjectItem[]>([])
 const searchKw = ref('')
 
 const grpCollapsed = reactive<Record<string, boolean>>({ sql: false, python: false, shell: false, datax: false })
@@ -417,7 +419,7 @@ interface TreeNode {
   name: string
   depth: number
   folderType: string
-  data?: any
+  data?: ComponentItem | FolderItem
 }
 
 function flatTree(type: string): TreeNode[] {
@@ -482,7 +484,7 @@ function isTabActive(compId: number) {
   return activeTab.value?.componentId === compId
 }
 
-function openComp(c: any) {
+function openComp(c: ComponentItem) {
   if (c.type === 'datax') {
     const existing = tabs.value.find(t => t.componentId === c.id)
     if (existing) { switchTab(existing.key); return }
@@ -520,7 +522,7 @@ function openComp(c: any) {
     datasourceId: (() => {
       const rawId = cfg.datasource_id || c.datasource_id || undefined
       if (rawId == null) return undefined
-      const validIds = new Set(datasources.value.map((d: any) => d.id))
+      const validIds = new Set(datasources.value.map((d) => d.id))
       return validIds.has(rawId) ? rawId : undefined
     })(),
     dirty: false,
@@ -600,27 +602,7 @@ async function deleteFolder(id: number) {
   } catch {}
 }
 
-// ---- 状态系统 ----
-// 状态定义：自动状态（不可手动设置）+ 手动状态
-const STATUS_DEFS: Record<string, { label: string; color: string; manual: boolean }> = {
-  draft:       { label: '草稿',   color: '#86909C', manual: false },
-  developing:  { label: '开发中', color: '#2B5AED', manual: true  },
-  testing:     { label: '测试中', color: '#FF7D00', manual: true  },
-  reviewing:   { label: '审核中', color: '#14B8A6', manual: true  },
-  tested:      { label: '已测试', color: '#A3C644', manual: true  },
-  online:      { label: '已上线', color: '#00B42A', manual: false },
-  offline:     { label: '已下线', color: '#C9CDD4', manual: true  },
-  paused:      { label: '已暂停', color: '#F53F3F', manual: true  },
-  deprecated:  { label: '已废弃', color: '#6B7280', manual: true  },
-  archived:    { label: '已归档', color: '#722ED1', manual: true  },
-}
-
-function statusLabel(s: string): string {
-  return STATUS_DEFS[s]?.label || s
-}
-function statusColor(s: string): string {
-  return STATUS_DEFS[s]?.color || '#86909C'
-}
+// ---- 状态系统（已从 ../types/component 导入 statusLabel / statusColor / manualStatusOptions）----
 function hexToRgba(hex: string, alpha: number): string {
   const h = hex.replace('#', '')
   const r = parseInt(h.substring(0, 2), 16)
@@ -635,28 +617,8 @@ function statusTagStyle(s: string) {
     color: color,
   }
 }
-const STATUS_TRANSITIONS: Record<string, string[]> = {
-  draft:      ['developing', 'testing', 'deprecated', 'archived'],
-  developing: ['testing', 'paused', 'deprecated'],
-  testing:    ['reviewing', 'tested', 'paused', 'deprecated'],
-  reviewing:  ['tested', 'paused', 'developing'],
-  tested:     ['paused', 'testing'],
-  online:     ['offline', 'paused'],
-  offline:    ['online', 'archived', 'paused', 'developing'],
-  paused:     [],
-  deprecated: ['archived'],
-  archived:   [],
-}
-function manualStatusOptions(current: string) {
-  if (current === 'paused') return []
-  if (current === 'archived') return []
-  const allowed = STATUS_TRANSITIONS[current] ?? []
-  return allowed
-    .filter(k => STATUS_DEFS[k]?.manual)
-    .map(k => ({ value: k, label: STATUS_DEFS[k].label, color: STATUS_DEFS[k].color }))
-}
 
-async function setCompStatus(c: any, status: string) {
+async function setCompStatus(c: ComponentItem, status: string) {
   try {
     if (status === '__resume__') {
       await resumeComponent(c.id)
@@ -669,7 +631,7 @@ async function setCompStatus(c: any, status: string) {
   } catch {}
 }
 
-async function confirmDeleteComp(c: any) {
+async function confirmDeleteComp(c: ComponentItem) {
   if (!confirm(`确定删除组件「${c.name}」？此操作不可恢复`)) return
   try {
     if (c.type === 'datax') {
@@ -813,7 +775,7 @@ async function loadDatasources() {
     const res: any = await getDatasources({ page_size: 100 })
     datasources.value = res.items || []
     // Clear stale datasourceId on any open tabs
-    const validIds = new Set(datasources.value.map((d: any) => d.id))
+    const validIds = new Set(datasources.value.map((d) => d.id))
     tabs.value.forEach(t => {
       if (t.datasourceId != null && !validIds.has(t.datasourceId)) {
         t.datasourceId = undefined
@@ -911,7 +873,7 @@ function buildStatusSubmenu(current: string): MenuItem[] {
 function buildMoveToFolderMenu(type: string, prefix: string): MenuItem[] {
   const typeFolders = folders.value.filter(f => f.type === type)
   const roots = typeFolders.filter(f => f.parent_id == null)
-  function buildSub(foldersList: any[]): MenuItem[] {
+  function buildSub(foldersList: FolderItem[]): MenuItem[] {
     return foldersList.map(f => {
       const children = typeFolders.filter(child => child.parent_id === f.id)
       const item: MenuItem = { key: `${prefix}-${f.id}`, label: f.name }

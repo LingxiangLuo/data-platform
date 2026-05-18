@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.permissions import check_resource_permission
+from app.core.encrypt import decrypt_password
 from app.models.datasource import DataSource
 from app.models.user import SysUser
 
@@ -23,7 +24,7 @@ def _connect_mysql(ds: DataSource, db_override: Optional[str] = None):
         host=ds.host,
         port=ds.port or 3306,
         user=ds.username,
-        password=ds.password,
+        password=decrypt_password(ds.password) or "",
         database=db_override or ds.database_name,
         connect_timeout=5,
         charset="utf8mb4",
@@ -54,7 +55,8 @@ def list_tables_api(
 ) -> Dict[str, Any]:
     """列出数据源所有表（支持多种数据库）"""
     ds = _get_ds_or_404(db, datasource_id)
-    check_resource_permission(db, current_user, "datasource", datasource_id, "read")
+    if not check_resource_permission(db, current_user, "datasource", datasource_id, "read"):
+        raise HTTPException(status_code=404, detail="数据源不存在")
     try:
         from app.core.db_adapter import list_tables as adapter_list_tables
         raw_tables = adapter_list_tables(ds)
@@ -80,8 +82,11 @@ def list_tables_api(
         }
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"读取元数据失败: {e}")
+    except Exception:
+        import logging
+        logging.getLogger(__name__).error("读取元数据失败", exc_info=True)
+        raise HTTPException(status_code=502, detail="读取元数据失败，请检查数据源连接")
+
 
 
 @router.get("/columns")
@@ -93,9 +98,11 @@ def list_columns_api(
 ) -> Dict[str, Any]:
     """列出某张表的字段（支持多种数据库），含主键/唯一/索引/外键/自增标记"""
     ds = _get_ds_or_404(db, datasource_id)
-    check_resource_permission(db, current_user, "datasource", datasource_id, "read")
-    if not all(part.replace("_", "").isalnum() for part in table.split(".")):
-        raise HTTPException(status_code=400, detail="表名格式非法")
+    if not check_resource_permission(db, current_user, "datasource", datasource_id, "read"):
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?", table):
+        raise HTTPException(status_code=400, detail="表名格式非法：仅允许字母、数字、下划线和单点号")
 
     t = (ds.type or "").lower()
     schema = None
@@ -259,13 +266,16 @@ def list_columns_api(
         }
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         if conn:
             try:
                 conn.close()
             except Exception:
                 pass
-        raise HTTPException(status_code=502, detail=f"读取字段失败: {e}")
+        import logging
+        logging.getLogger(__name__).error("读取字段失败", exc_info=True)
+        raise HTTPException(status_code=502, detail="读取字段失败，请检查数据源连接")
+
 
 
 @router.get("/preview")
@@ -278,10 +288,12 @@ def preview_table(
 ) -> Dict[str, Any]:
     """前 N 行数据预览（支持多种数据库，通过 SQLAlchemy 执行）"""
     ds = _get_ds_or_404(db, datasource_id)
-    check_resource_permission(db, current_user, "datasource", datasource_id, "read")
-    # 允许 schema.table 格式
-    if not all(part.replace("_", "").isalnum() for part in table.split(".")):
-        raise HTTPException(status_code=400, detail="表名格式非法")
+    if not check_resource_permission(db, current_user, "datasource", datasource_id, "read"):
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    # 严格校验表名：仅允许 ASCII 字母、数字、下划线、点号（schema.table）
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?", table):
+        raise HTTPException(status_code=400, detail="表名格式非法：仅允许字母、数字、下划线和单点号")
     try:
         import sqlalchemy as sa
         from app.core.db_adapter import sqlalchemy_url
@@ -311,31 +323,41 @@ def preview_table(
         # 其他 SQL 数据库用 SQLAlchemy
         connect_args = {"connect_timeout": 10} if t in ("mysql", "postgresql") else {}
         engine = sa.create_engine(sqlalchemy_url(ds), pool_pre_ping=True, connect_args=connect_args)
+        # 对已通过正则校验的表名做数据库特定引用
+        def _quote_identifier(name: str, db_type: str) -> str:
+            if db_type == "sqlserver":
+                return f"[{name}]"
+            if db_type == "oracle":
+                return f'"{name.upper()}"'
+            return f'"{name}"'
+
+        quoted_table = _quote_identifier(table, t) if "." not in table else ".".join(_quote_identifier(p, t) for p in table.split(".", 1))
+
         # MySQL / ClickHouse: LIMIT n; SQLServer: TOP n; Oracle: FETCH FIRST n ROWS ONLY
         if t == "sqlserver":
-            query = f"SELECT TOP {limit} * FROM [{table}]"
+            query = f"SELECT TOP {limit} * FROM {quoted_table}"
         elif t == "oracle":
-            query = f'SELECT * FROM "{table}" FETCH FIRST {limit} ROWS ONLY'
+            query = f"SELECT * FROM {quoted_table} FETCH FIRST {limit} ROWS ONLY"
         elif t == "clickhouse":
-            query = f"SELECT * FROM `{table}` LIMIT {limit}"
+            query = f"SELECT * FROM {quoted_table} LIMIT {limit}"
         elif t == "postgresql":
             from app.core.db_adapter import _connect
             import psycopg2.extras
             conn = _connect(ds)
             try:
                 cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-                # table 可能是 "schema.name" 格式
+                # table 已通过正则校验，仅允许字母数字下划线和单点号
                 if "." in table:
                     sch, tbl = table.split(".", 1)
-                    cur.execute(f'SELECT * FROM "{sch}"."{tbl}" LIMIT %s', (limit,))
+                    cur.execute('SELECT * FROM %s.%s LIMIT %%s', (psycopg2.extensions.AsIs(f'"{sch}"'), psycopg2.extensions.AsIs(f'"{tbl}"'), limit))
                 else:
                     # 先尝试 search_path，再 fallback schema-qualified
                     try:
-                        cur.execute(f'SELECT * FROM "{table}" LIMIT %s', (limit,))
+                        cur.execute('SELECT * FROM %s LIMIT %%s', (psycopg2.extensions.AsIs(f'"{table}"'), limit))
                     except Exception:
                         conn.rollback()
                         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-                        cur.execute(f'SELECT * FROM "{ds.database_name}"."{table}" LIMIT %s', (limit,))
+                        cur.execute('SELECT * FROM %s.%s LIMIT %%s', (psycopg2.extensions.AsIs(f'"{ds.database_name}"'), psycopg2.extensions.AsIs(f'"{table}"'), limit))
                 rows = cur.fetchall()
                 columns = list(rows[0].keys()) if rows else [desc[0] for desc in cur.description] if cur.description else []
             finally:
@@ -343,7 +365,7 @@ def preview_table(
             safe_rows = [{k: (str(v) if v is not None else None) for k, v in r.items()} for r in rows]
             return {"datasource_id": ds.id, "table": table, "columns": columns, "rows": safe_rows, "count": len(safe_rows)}
         else:
-            query = f"SELECT * FROM `{table}` LIMIT {limit}"
+            query = f"SELECT * FROM {quoted_table} LIMIT {limit}"
 
         with engine.connect() as conn:
             res = conn.execute(sa.text(query))
@@ -354,8 +376,11 @@ def preview_table(
         return {"datasource_id": ds.id, "table": table, "columns": columns, "rows": safe_rows, "count": len(safe_rows)}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"数据预览失败: {e}")
+    except Exception:
+        import logging
+        logging.getLogger(__name__).error("数据预览失败", exc_info=True)
+        raise HTTPException(status_code=502, detail="数据预览失败，请检查数据源连接")
+
 
 
 # ============ 自动建表（DataWorks「一键建表」对标）============
@@ -445,9 +470,11 @@ def generate_ddl(
 ):
     """根据字段列表生成 CREATE TABLE DDL（支持多种数据库）"""
     ds = _get_ds_or_404(db, req.datasource_id)
-    check_resource_permission(db, current_user, "datasource", req.datasource_id, "read")
-    if not req.target_table.replace("_", "").isalnum():
-        raise HTTPException(status_code=400, detail="表名格式非法")
+    if not check_resource_permission(db, current_user, "datasource", req.datasource_id, "read"):
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9_]+", req.target_table):
+        raise HTTPException(status_code=400, detail="表名格式非法：仅允许字母、数字和下划线")
     ddl = _generate_ddl_sql(ds.type or "mysql", req.target_table, req.columns)
     return {"datasource_id": ds.id, "target_table": req.target_table, "ddl": ddl}
 
@@ -460,11 +487,15 @@ def execute_ddl(
 ):
     """执行 DDL（只接受 CREATE TABLE 语句以减少风险）"""
     ds = _get_ds_or_404(db, req.datasource_id)
-    check_resource_permission(db, current_user, "datasource", req.datasource_id, "write")
+    if not check_resource_permission(db, current_user, "datasource", req.datasource_id, "write"):
+        raise HTTPException(status_code=404, detail="数据源不存在")
     sql = (req.ddl or "").strip()
+    # 严格校验：只允许 CREATE TABLE IF NOT EXISTS，禁止分号防多语句
+    if ";" in sql:
+        raise HTTPException(status_code=400, detail="DDL 中不允许包含分号")
     head = sql.lstrip().upper()
-    if not head.startswith("CREATE TABLE"):
-        raise HTTPException(status_code=400, detail="仅允许 CREATE TABLE 语句")
+    if not head.startswith("CREATE TABLE IF NOT EXISTS"):
+        raise HTTPException(status_code=400, detail="仅允许 CREATE TABLE IF NOT EXISTS 语句")
     try:
         import sqlalchemy as sa
         from app.core.db_adapter import sqlalchemy_url
@@ -475,8 +506,10 @@ def execute_ddl(
             conn.commit()
         engine.dispose()
         return {"ok": True, "message": "建表成功"}
-    except Exception as e:
-        return {"ok": False, "message": f"建表失败: {e}"}
+    except Exception:
+        import logging
+        logging.getLogger(__name__).error("建表失败", exc_info=True)
+        raise HTTPException(status_code=502, detail="建表失败，请检查 DDL 语法或数据源连接")
 
 
 # ===== 统计 =====
@@ -510,7 +543,7 @@ def metadata_stats(
                 import pymysql
                 conn = pymysql.connect(
                     host=ds.host, port=ds.port or 3306,
-                    user=ds.username, password=ds.password,
+                    user=ds.username, password=decrypt_password(ds.password) or "",
                     database=ds.database_name, connect_timeout=5,
                 )
                 cur = conn.cursor()
@@ -650,8 +683,11 @@ def table_quality(
 ) -> Dict[str, Any]:
     """表级数据质量分析（支持 MySQL / PostgreSQL）"""
     ds = _get_ds_or_404(db, datasource_id)
-    if not all(part.replace("_", "").isalnum() for part in table.split(".")):
-        raise HTTPException(status_code=400, detail="表名格式非法")
+    if not check_resource_permission(db, current_user, "datasource", datasource_id, "read"):
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?", table):
+        raise HTTPException(status_code=400, detail="表名格式非法：仅允许字母、数字、下划线和单点号")
 
     t = (ds.type or "").lower()
     if t not in ("mysql", "postgresql"):
@@ -785,14 +821,14 @@ def table_quality(
         if not columns_meta:
             raise HTTPException(status_code=404, detail=f"表 {table} 不存在或无字段")
 
-        # 2. 获取总行数
+        # 2. 获取总行数（表名已通过正则校验，仅含字母数字下划线，安全引用）
         if t == "mysql":
-            cur.execute("SELECT COUNT(*) FROM `%s`" % tbl)
+            cur.execute(f"SELECT COUNT(*) FROM `{tbl}`")
         else:
             if schema:
-                cur.execute('SELECT COUNT(*) FROM "%s"."%s"' % (schema, tbl))
+                cur.execute(f'SELECT COUNT(*) FROM "{schema}"."{tbl}"')
             else:
-                cur.execute('SELECT COUNT(*) FROM "%s"' % tbl)
+                cur.execute(f'SELECT COUNT(*) FROM "{tbl}"')
         total_rows = cur.fetchone()[0] or 0
 
         # 3. 对每个字段执行质量分析
@@ -813,8 +849,7 @@ def table_quality(
                 if t == "mysql":
                     # NULL 和 DISTINCT
                     cur.execute(
-                        "SELECT COUNT(*) - COUNT(`%s`), COUNT(DISTINCT `%s`) FROM `%s`"
-                        % (col_name, col_name, tbl)
+                        f"SELECT COUNT(*) - COUNT(`{col_name}`), COUNT(DISTINCT `{col_name}`) FROM `{tbl}`"
                     )
                     row = cur.fetchone()
                     null_count = row[0] or 0
@@ -823,8 +858,7 @@ def table_quality(
                     # 数值统计
                     if is_numeric:
                         cur.execute(
-                            "SELECT MIN(`%s`), MAX(`%s`), AVG(`%s`) FROM `%s`"
-                            % (col_name, col_name, col_name, tbl)
+                            f"SELECT MIN(`{col_name}`), MAX(`{col_name}`), AVG(`{col_name}`) FROM `{tbl}`"
                         )
                         row = cur.fetchone()
                         min_val = str(row[0]) if row[0] is not None else None
@@ -835,13 +869,13 @@ def table_quality(
                     # NULL 和 DISTINCT
                     if schema:
                         cur.execute(
-                            'SELECT COUNT(*) - COUNT("%s"), COUNT(DISTINCT "%s") '
-                            'FROM "%s"."%s"' % (col_name, col_name, schema, tbl)
+                            f'SELECT COUNT(*) - COUNT("{col_name}"), COUNT(DISTINCT "{col_name}") '
+                            f'FROM "{schema}"."{tbl}"'
                         )
                     else:
                         cur.execute(
-                            'SELECT COUNT(*) - COUNT("%s"), COUNT(DISTINCT "%s") '
-                            'FROM "%s"' % (col_name, col_name, tbl)
+                            f'SELECT COUNT(*) - COUNT("{col_name}"), COUNT(DISTINCT "{col_name}") '
+                            f'FROM "{tbl}"'
                         )
                     row = cur.fetchone()
                     null_count = row[0] or 0
@@ -851,13 +885,13 @@ def table_quality(
                     if is_numeric:
                         if schema:
                             cur.execute(
-                                'SELECT MIN("%s"), MAX("%s"), AVG("%s") '
-                                'FROM "%s"."%s"' % (col_name, col_name, col_name, schema, tbl)
+                                f'SELECT MIN("{col_name}"), MAX("{col_name}"), AVG("{col_name}") '
+                                f'FROM "{schema}"."{tbl}"'
                             )
                         else:
                             cur.execute(
-                                'SELECT MIN("%s"), MAX("%s"), AVG("%s") '
-                                'FROM "%s"' % (col_name, col_name, col_name, tbl)
+                                f'SELECT MIN("{col_name}"), MAX("{col_name}"), AVG("{col_name}") '
+                                f'FROM "{tbl}"'
                             )
                         row = cur.fetchone()
                         min_val = str(row[0]) if row[0] is not None else None
@@ -915,11 +949,13 @@ def table_quality(
         }
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         if conn:
             try:
                 conn.close()
             except Exception:
                 pass
-        raise HTTPException(status_code=502, detail=f"数据质量分析失败: {e}")
+        import logging
+        logging.getLogger(__name__).error("数据质量分析失败", exc_info=True)
+        raise HTTPException(status_code=502, detail="数据质量分析失败，请检查数据源连接")
 

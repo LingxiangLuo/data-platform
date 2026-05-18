@@ -1,7 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from jose import JWTError, jwt
+import hashlib
+import time
+
+import jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -14,6 +17,62 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security_scheme = HTTPBearer(auto_error=False)
 
 _COOKIE_NAME = "access_token"
+
+# Token 黑名单（内存 + Redis）
+# 使用 dict 存储 {token_hash: exp_timestamp}，定期清理过期的条目
+_token_blacklist: dict[str, float] = {}
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()[:32]
+
+
+def _cleanup_expired_tokens() -> None:
+    """清理内存中已过期的 token 黑名单条目"""
+    now = time.time()
+    expired = [h for h, exp in _token_blacklist.items() if exp < now]
+    for h in expired:
+        _token_blacklist.pop(h, None)
+
+
+def add_to_blacklist(token: str) -> None:
+    """将 token 加入黑名单；利用 token 自身的 exp 作为 TTL"""
+    try:
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM],
+            options={"verify_exp": False},
+        )
+        exp = payload.get("exp", time.time() + 3600)
+    except Exception:
+        exp = time.time() + 3600
+    ttl = max(1, int(exp - time.time()))
+    h = _token_hash(token)
+    _token_blacklist[h] = exp
+    # 定期清理过期条目（每 100 次写入触发一次）
+    if len(_token_blacklist) % 100 == 0:
+        _cleanup_expired_tokens()
+    try:
+        import redis
+        r = redis.from_url(settings.REDIS_URL, socket_connect_timeout=1)
+        r.setex(f"token_blacklist:{h}", ttl, "1")
+    except Exception:
+        pass
+
+
+def is_token_blacklisted(token: str) -> bool:
+    h = _token_hash(token)
+    if h in _token_blacklist:
+        if _token_blacklist[h] > time.time():
+            return True
+        # 已过期，清理
+        _token_blacklist.pop(h, None)
+        return False
+    try:
+        import redis
+        r = redis.from_url(settings.REDIS_URL, socket_connect_timeout=1)
+        return r.exists(f"token_blacklist:{h}") == 1
+    except Exception:
+        return False
 
 
 def hash_password(password: str) -> str:
@@ -35,7 +94,7 @@ def _decode_token(token: str) -> Optional[str]:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         return payload.get("sub")
-    except JWTError:
+    except jwt.PyJWTError:
         return None
 
 
@@ -56,6 +115,9 @@ def get_current_user(
 
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未登录")
+
+    if is_token_blacklisted(token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="认证已失效")
 
     username = _decode_token(token)
     if not username:

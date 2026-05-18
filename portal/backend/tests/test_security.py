@@ -58,7 +58,7 @@ def test_invalid_token_returns_none():
 
 def test_expired_token_returns_none():
     from datetime import datetime, timedelta, timezone
-    from jose import jwt
+    import jwt
     from app.core.config import settings
 
     payload = {

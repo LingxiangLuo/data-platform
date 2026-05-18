@@ -2,6 +2,7 @@ import time
 import subprocess
 import tempfile
 import os
+import re
 from typing import Optional, Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.core.permissions import require_permission
+from app.core.permissions import require_permission, check_resource_permission
 from app.models.component import Component
 from app.models.user import SysUser
 
@@ -172,9 +173,17 @@ def _check_workflow_refs(db: Session, comp_id: int):
 
 
 def _run_sql(db: Session, datasource_id: int, sql: str):
-    """复用的 SQL 执行逻辑，返回 dict"""
+    """复用的 SQL 执行逻辑，返回 dict。仅允许只读 SELECT。"""
     from app.models.datasource import DataSource
     import sqlalchemy as sa
+
+    # 只允许 SELECT 语句，禁止 DDL/DML
+    stripped = sql.strip().upper()
+    if not stripped.startswith("SELECT"):
+        raise HTTPException(400, "仅允许 SELECT 查询语句")
+    # 禁止多语句（分号）
+    if ";" in sql:
+        raise HTTPException(400, "不允许包含分号")
 
     ds = db.query(DataSource).filter(DataSource.id == datasource_id).first()
     if not ds:
@@ -206,8 +215,12 @@ def _run_sql(db: Session, datasource_id: int, sql: str):
                     "affected": res.rowcount,
                     "duration_ms": duration_ms,
                 }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(400, str(e))
+        import logging
+        logging.getLogger(__name__).error(f"SQL 执行失败: {e}", exc_info=True)
+        raise HTTPException(400, "SQL 执行失败，请检查语法或数据源配置")
     finally:
         engine.dispose()
 
@@ -232,7 +245,36 @@ def list_components(
         q = q.filter(Component.status == status)
     total = q.count()
     items = q.order_by(Component.sort_order.asc(), Component.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
-    return {"total": total, "items": [_serialize(c) for c in items]}
+
+    # 对 datax 类型组件，批量查询 SyncTask 填充 source_table / target_table，保证前端显示一致
+    datax_items = [c for c in items if c.type == "datax"]
+    sync_task_map: dict[int, Any] = {}
+    if datax_items:
+        from app.models.sync_task import SyncTask
+        sync_task_ids = [
+            (c.config_json or {}).get("sync_task_id")
+            for c in datax_items
+            if (c.config_json or {}).get("sync_task_id")
+        ]
+        if sync_task_ids:
+            tasks = db.query(SyncTask).filter(SyncTask.id.in_(sync_task_ids)).all()
+            sync_task_map = {t.id: t for t in tasks}
+
+    serialized_items = []
+    for c in items:
+        s = _serialize(c)
+        if c.type == "datax":
+            sync_task_id = (c.config_json or {}).get("sync_task_id")
+            if sync_task_id and sync_task_id in sync_task_map:
+                task = sync_task_map[sync_task_id]
+                s["config_json"] = {
+                    **s["config_json"],
+                    "source_table": task.source_table,
+                    "target_table": task.target_table,
+                }
+        serialized_items.append(s)
+
+    return {"total": total, "items": serialized_items}
 
 
 @router.post("")
@@ -364,7 +406,13 @@ def run_sql_adhoc(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(require_permission("component:write")),
 ):
-    """临时 SQL 执行，结果直接返回"""
+    """临时 SQL 执行，结果直接返回。额外校验数据源级读权限。"""
+    from app.models.datasource import DataSource
+    ds = db.query(DataSource).filter(DataSource.id == req.datasource_id).first()
+    if not ds:
+        raise HTTPException(404, "数据源不存在")
+    if not check_resource_permission(db, current_user, "datasource", req.datasource_id, "read"):
+        raise HTTPException(404, "数据源不存在")
     return _run_sql(db, req.datasource_id, req.sql)
 
 
@@ -454,6 +502,38 @@ def run_component(
         return _run_sql(db, ds_id, code)
 
     elif c.type in ("python", "shell"):
+        # 安全沙箱校验
+        if c.type == "shell":
+            # 禁止 shell 元字符：管道、重定向、命令替换、逻辑运算符、分号、换行
+            if re.search(r"[;|&<>{}()$`\n\r]|&&|\|\|", code):
+                raise HTTPException(400, "Shell 组件禁止包含危险字符（; | & < > { } ( ) $ ` && || 换行）")
+        elif c.type == "python":
+            # 禁止危险导入和函数（文本黑名单是尽力而为，长期应迁移到容器沙箱）
+            dangerous = [
+                "os", "sys", "subprocess", "socket", "importlib",
+                "builtins", "__builtins__", "ctypes", "pathlib",
+                "code", "codeop", "types", "inspect", "gc",
+                "traceback", "linecache", "tokenize", "pickle",
+                "marshal", "multiprocessing", "threading",
+            ]
+            dangerous_funcs = [
+                "eval", "exec", "compile", "open", "input",
+                "__import__", "getattr", "setattr", "delattr",
+                "breakpoint", "type",
+            ]
+            for mod in dangerous:
+                if re.search(rf"\bimport\s+{mod}\b|\bfrom\s+{mod}\b", code):
+                    raise HTTPException(400, f"Python 组件禁止导入危险模块: {mod}")
+            for fn in dangerous_funcs:
+                if re.search(rf"\b{fn}\s*\(", code):
+                    raise HTTPException(400, f"Python 组件禁止使用危险函数: {fn}")
+                # 阻止通过变量别名间接调用（如 x = open; x(...)）
+                if re.search(rf"\b{fn}\b\s*=", code):
+                    raise HTTPException(400, f"Python 组件禁止将危险函数赋值给变量: {fn}")
+            # 阻止通过 dunder 属性链反射逃逸（如 ().__class__.__base__.__subclasses__()）
+            if re.search(r"__\w+__", code):
+                raise HTTPException(400, "Python 组件禁止使用双下划线属性反射")
+
         if c.type == "python":
             with tempfile.NamedTemporaryFile(
                 suffix=".py", mode="w", delete=False, encoding="utf-8"
@@ -563,7 +643,7 @@ def set_component_status(
     comp_id: int,
     req: SetStatusRequest,
     db: Session = Depends(get_db),
-    current_user: SysUser = Depends(get_current_user),
+    current_user: SysUser = Depends(require_permission("component:write")),
 ):
     """手动设置组件状态（仅允许 MANUAL_STATUSES 中的状态）"""
     c = _get_or_404(db, comp_id)

@@ -1,11 +1,20 @@
 import sys
 import os
+import logging
 import bcrypt
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI
+# 结构化日志配置
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.database import engine, Base, SessionLocal
 from app.core.config import settings
 from app.core.security import hash_password
@@ -18,8 +27,23 @@ from app.models.oauth_config import SysOAuthConfig  # noqa: F401
 from app.models.sys_config import SysConfig  # noqa: F401
 from app.models.sys_notify_channel import SysNotifyChannel  # noqa: F401
 
-# 创建表
-Base.metadata.create_all(bind=engine)
+# 数据库迁移：优先使用 Alembic
+import subprocess
+alembic_ok = False
+try:
+    result = subprocess.run(["alembic", "upgrade", "head"], capture_output=True, text=True)
+    if result.returncode == 0:
+        alembic_ok = True
+    else:
+        logging.warning(f"Alembic 迁移失败: {result.stderr}")
+except FileNotFoundError:
+    logging.warning("Alembic 未安装，跳过 Alembic 迁移")
+except Exception as e:
+    logging.warning(f"Alembic 迁移异常: {e}")
+
+# Alembic 不可用时降级到 create_all（仅开发环境）
+if not alembic_ok:
+    Base.metadata.create_all(bind=engine)
 run_all_migrations()
 
 
@@ -122,7 +146,7 @@ def _ensure_admin():
     db = SessionLocal()
     try:
         admin = db.query(SysUser).filter(SysUser.username == "admin").first()
-        if not admin:
+        if not admin and settings.ADMIN_INIT_PASSWORD:
             admin = SysUser(
                 username="admin",
                 password=hash_password(settings.ADMIN_INIT_PASSWORD),
@@ -132,6 +156,11 @@ def _ensure_admin():
             )
             db.add(admin)
             db.flush()
+
+        # 如果没有 admin 用户且未创建，跳过后续关联
+        if not admin:
+            db.commit()
+            return
 
         # 确保 admin 用户关联了 RBAC admin 角色
         admin_role = db.query(SysRole).filter(SysRole.code == "admin").first()
@@ -166,15 +195,36 @@ def _ensure_default_project():
 _ensure_admin()
 _ensure_default_project()
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # CSP：仅允许同源资源，禁止内联脚本，禁止不安全的来源
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "font-src 'self'; "
+            "frame-ancestors 'none';"
+        )
+        return response
+
+
 app = FastAPI(
     title="数据中台 MVP",
     description="金融行业离线数据中台统一门户 API",
     version="1.0.0",
 )
 
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.CORS_ORIGINS if settings.CORS_ORIGINS is not None else ["http://localhost:5173", "http://localhost"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

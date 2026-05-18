@@ -278,6 +278,7 @@ import {
   getSyncTask, createSyncTask, updateSyncTask, previewSyncTaskUnsaved,
   getDatasources, getMetadataTables, getMetadataColumns,
   generateDDL, executeDDL, setSyncTaskStatus,
+  getComponents, updateComponent, createComponent,
 } from '../api'
 import FieldMappingCanvas from './FieldMappingCanvas.vue'
 
@@ -498,9 +499,38 @@ async function handleSave() {
     let res: any
     if (props.taskId) {
       res = await updateSyncTask(props.taskId, payload)
+      // 同步更新关联 Component 的 name 和 config_json（保持左侧树显示一致）
+      try {
+        const compRes: any = await getComponents({ type: 'datax', page_size: 500 })
+        const comps: any[] = compRes?.items || compRes?.data || []
+        const comp = comps.find((c: any) => c.config_json?.sync_task_id === props.taskId)
+        if (comp) {
+          await updateComponent(comp.id, {
+            name: form.name,
+            config_json: {
+              ...comp.config_json,
+              source_table: form.source_table,
+              target_table: form.target_table,
+            },
+          })
+        }
+      } catch {}
       Message.success('任务已更新')
     } else {
       res = await createSyncTask(payload)
+      // 同时创建 datax 类型的 Component，使其出现在组件树
+      try {
+        await createComponent({
+          name: form.name,
+          type: 'datax',
+          description: `DataX 同步：${form.source_table} → ${form.target_table}`,
+          config_json: {
+            sync_task_id: res.id,
+            source_table: form.source_table,
+            target_table: form.target_table,
+          },
+        })
+      } catch {}
       Message.success('任务已创建')
     }
     emit('saved', res)

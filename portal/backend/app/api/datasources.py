@@ -1,16 +1,22 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.permissions import get_accessible_ids, check_resource_permission, require_permission
+from app.core.encrypt import encrypt_password
 from app.models.datasource import DataSource
 from app.models.user import SysUser
 
 router = APIRouter(prefix="/datasources", tags=["数据源"])
+
+_SUPPORTED_DS_TYPES = {
+    "mysql", "postgresql", "sqlserver", "oracle",
+    "clickhouse", "mongodb", "redis", "hive",
+}
 
 
 class DataSourceCreate(BaseModel):
@@ -22,6 +28,13 @@ class DataSourceCreate(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     description: Optional[str] = None
+
+    @field_validator("type")
+    @classmethod
+    def _check_type(cls, v: str) -> str:
+        if v.lower() not in _SUPPORTED_DS_TYPES:
+            raise ValueError(f"不支持的数据源类型: {v}，允许: {', '.join(sorted(_SUPPORTED_DS_TYPES))}")
+        return v.lower()
 
 
 class DataSourceUpdate(BaseModel):
@@ -42,7 +55,7 @@ def _serialize(ds: DataSource) -> dict:
         "host": ds.host,
         "port": ds.port,
         "database_name": ds.database_name,
-        "username": ds.username,
+        "username": ds.username[0] + "****" if ds.username and len(ds.username) > 1 else ("****" if ds.username else ""),
         "description": ds.description,
         "status": ds.status,
         "last_check_time": str(ds.last_check_time) if ds.last_check_time else None,
@@ -78,7 +91,11 @@ def create_datasource(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(require_permission("datasource:write")),
 ):
-    ds = DataSource(**req.model_dump(), created_by=current_user.id)
+    data = req.model_dump()
+    # 空密码也加密（存储空字符串的加密值），避免前端绕过
+    if "password" in data:
+        data["password"] = encrypt_password(data["password"] or "")
+    ds = DataSource(**data, created_by=current_user.id)
     db.add(ds)
     db.flush()  # 获取 ds.id
 
@@ -125,6 +142,8 @@ def update_datasource(
     if not check_resource_permission(db, current_user, "datasource", ds_id, "write"):
         raise HTTPException(status_code=404, detail="数据源不存在")
     for key, value in req.model_dump(exclude_unset=True).items():
+        if key == "password":
+            value = encrypt_password(value or "")
         setattr(ds, key, value)
     db.commit()
     db.refresh(ds)
@@ -142,6 +161,31 @@ def delete_datasource(
         raise HTTPException(status_code=404, detail="数据源不存在")
     if not check_resource_permission(db, current_user, "datasource", ds_id, "admin"):
         raise HTTPException(status_code=404, detail="数据源不存在")
+    # 检查是否被引用
+    from app.models.component import Component
+    from app.models.sync_task import SyncTask
+
+    # 组件引用（config_json 中的 datasource_id / source_id / target_id）
+    for comp in db.query(Component).filter(Component.config_json.isnot(None)).all():
+        cfg = comp.config_json or {}
+        if cfg.get("datasource_id") == ds_id or cfg.get("source_id") == ds_id or cfg.get("target_id") == ds_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"数据源被组件「{comp.name}」引用，请先解除引用",
+            )
+
+    # 同步任务引用
+    sync_ref = (
+        db.query(SyncTask)
+        .filter((SyncTask.source_id == ds_id) | (SyncTask.target_id == ds_id))
+        .first()
+    )
+    if sync_ref:
+        raise HTTPException(
+            status_code=400,
+            detail=f"数据源被同步任务「{sync_ref.name}」引用，请先解除引用",
+        )
+
     # 清理 ACL 记录
     from app.models.resource_access import SysResourceAccess
     db.query(SysResourceAccess).filter(

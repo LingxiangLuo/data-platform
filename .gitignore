@@ -36,3 +36,7 @@ logs/
 # Data
 *.sql.gz
 *.dump
+
+# Development
+portal.db
+review_verification.md

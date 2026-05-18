@@ -89,7 +89,7 @@
         </template>
 
         <div class="login-footer">
-          <span>默认账号: admin / admin123</span>
+          <span>请联系管理员获取账号</span>
         </div>
       </div>
 
@@ -114,9 +114,9 @@ const userStore = useUserStore()
 const loading = ref(false)
 
 const form = reactive({
-  username: 'admin',
-  password: 'admin123',
-  remember: true,
+  username: '',
+  password: '',
+  remember: false,
 })
 
 const _ALL_PROVIDERS = [
