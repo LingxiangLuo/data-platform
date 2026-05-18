@@ -82,9 +82,7 @@
       <SyncTaskCanvas
         v-if="canvasKey"
         :key="canvasKey"
-        :task-id="selectedTaskId"
-        :project-id="selectedProjectId"
-        :projects="projects"
+        :comp-id="selectedCompId"
         @saved="onTaskSaved"
         @status-changed="onStatusChanged"
         @open-script="onOpenScript"
@@ -162,6 +160,7 @@ import {
 import {
   getSyncTasks, deleteSyncTask,
   getProjects, createProject, updateProject, deleteProject,
+  getComponents,
 } from '../api'
 import SyncTaskCanvas from '../components/SyncTaskCanvas.vue'
 import SyncTaskWizard from '../components/SyncTaskWizard.vue'
@@ -173,6 +172,7 @@ const collapsed = reactive<Record<number, boolean>>({})
 
 const selectedTaskId = ref<number | null>(null)
 const selectedProjectId = ref<number | null>(null)
+const selectedCompId = ref<number | null>(null)
 const canvasKey = ref<number>(1)  // 切换任务时强制重建 SyncTaskCanvas（初始 1 保证首屏直接渲染）
 
 // 项目弹窗
@@ -229,31 +229,46 @@ function tasksByProject(p: any) {
 
 function toggleProject(pid: number) { collapsed[pid] = !collapsed[pid] }
 
-function selectTask(t: any) {
+async function selectTask(t: any) {
   selectedTaskId.value = t.id
   selectedProjectId.value = t.project_id ?? null
+  // 查找关联的 Component ID
+  try {
+    const res: any = await getComponents({ type: 'datax', page_size: 500 })
+    const comps = res?.items || res?.data || []
+    const comp = comps.find((c: any) => c.config_json?.sync_task_id === t.id)
+    selectedCompId.value = comp?.id ?? null
+  } catch {
+    selectedCompId.value = null
+  }
   canvasKey.value++
 }
 
 function newTask() {
   selectedTaskId.value = null
+  selectedCompId.value = null
   if (selectedProjectId.value == null && projects.value.length) {
     selectedProjectId.value = projects.value[0].id
   }
   canvasKey.value++
 }
 
-async function onTaskSaved(task: any) {
+async function onTaskSaved(comp: any) {
   await loadProjects()
   await loadAllTasks()
-  // 切到刚保存的任务
-  selectedTaskId.value = task.id
-  selectedProjectId.value = task.project_id ?? null
-  canvasKey.value++  // 让 Canvas 用新 task 重新初始化
+  selectedCompId.value = comp?.id ?? null
+  // 切到刚保存的任务：从 Component 的 sync_task_id 反查
+  const syncTaskId = comp?.config_json?.sync_task_id
+  if (syncTaskId) {
+    selectedTaskId.value = syncTaskId
+    const t = allTasks.value.find((x: any) => x.id === syncTaskId)
+    if (t) selectedProjectId.value = t.project_id ?? null
+  }
+  canvasKey.value++
 }
 
 // 上线/下线只刷新侧边栏状态点，不重建 Canvas
-async function onStatusChanged(task: any) {
+async function onStatusChanged(comp: any) {
   await loadProjects()
   await loadAllTasks()
 }

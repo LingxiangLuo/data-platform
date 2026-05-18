@@ -167,6 +167,8 @@ async def _feishu_user(code: str, app_id: str, app_secret: str) -> dict:
             )
             resp.raise_for_status()
             data = resp.json()
+            if data.get("code", -1) != 0:
+                raise RuntimeError(f"飞书 app_token 失败: {data.get('msg') or data.get('message', '未知错误')}")
             app_token = data.get("app_access_token", "")
             expire = data.get("expire", 7200)
             if app_token:
@@ -179,8 +181,13 @@ async def _feishu_user(code: str, app_id: str, app_secret: str) -> dict:
             json={"grant_type": "authorization_code", "code": code},
         )
         resp2.raise_for_status()
-        data2 = resp2.json().get("data", {})
+        data2_raw = resp2.json()
+        if data2_raw.get("code", -1) != 0:
+            raise RuntimeError(f"飞书换 token 失败: {data2_raw.get('msg') or data2_raw.get('message', '未知错误')}")
+        data2 = data2_raw.get("data", {})
         user_token = data2.get("access_token", "")
+        if not user_token:
+            raise RuntimeError("飞书未返回 user_access_token")
 
         # 3. 获取用户信息
         resp3 = await client.get(
@@ -188,7 +195,10 @@ async def _feishu_user(code: str, app_id: str, app_secret: str) -> dict:
             headers={"Authorization": f"Bearer {user_token}"},
         )
         resp3.raise_for_status()
-        info = resp3.json().get("data", {})
+        data3_raw = resp3.json()
+        if data3_raw.get("code", -1) != 0:
+            raise RuntimeError(f"飞书获取用户信息失败: {data3_raw.get('msg') or data3_raw.get('message', '未知错误')}")
+        info = data3_raw.get("data", {})
         return {
             "openid": info.get("open_id", ""),
             "name": info.get("name", ""),

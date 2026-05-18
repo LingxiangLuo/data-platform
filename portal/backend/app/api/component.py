@@ -130,12 +130,13 @@ def _json_val(v):
 
 def _serialize(c: Component) -> dict:
     status = c.status
-    return {
+    cfg = c.config_json or {}
+    s = {
         "id": c.id,
         "name": c.name,
         "type": c.type,
         "description": c.description,
-        "config_json": c.config_json or {},
+        "config_json": cfg,
         "version": c.version,
         "status": status,
         "status_label": STATUS_LABELS.get(status, status),
@@ -143,11 +144,20 @@ def _serialize(c: Component) -> dict:
         "ds_task_code": c.ds_task_code,
         "folder_id": c.folder_id if hasattr(c, 'folder_id') else None,
         "sort_order": c.sort_order if hasattr(c, 'sort_order') else 0,
-        "code": (c.config_json or {}).get({'sql': 'sql', 'python': 'script', 'shell': 'script', 'datax': 'script'}.get(c.type, 'sql'), '') or '',
-        "datasource_id": (c.config_json or {}).get('datasource_id'),
+        "code": cfg.get({'sql': 'sql', 'python': 'script', 'shell': 'script', 'datax': 'script'}.get(c.type, 'sql'), '') or '',
+        "datasource_id": cfg.get('datasource_id'),
         "created_at": str(c.created_at) if c.created_at else None,
         "updated_at": str(c.updated_at) if c.updated_at else None,
     }
+    # datax 类型：把 config_json 中的业务字段扁平化到顶层，前端可直接使用
+    if c.type == "datax":
+        for key in ("source_id", "target_id", "source_table", "target_table",
+                    "sync_type", "increment_column", "field_mapping",
+                    "where_clause", "split_pk", "write_mode", "channel",
+                    "pre_sql", "post_sql", "sync_task_id", "rawJson"):
+            if key in cfg:
+                s[key] = cfg[key]
+    return s
 
 
 def _get_or_404(db: Session, comp_id: int) -> Component:
@@ -245,36 +255,7 @@ def list_components(
         q = q.filter(Component.status == status)
     total = q.count()
     items = q.order_by(Component.sort_order.asc(), Component.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
-
-    # 对 datax 类型组件，批量查询 SyncTask 填充 source_table / target_table，保证前端显示一致
-    datax_items = [c for c in items if c.type == "datax"]
-    sync_task_map: dict[int, Any] = {}
-    if datax_items:
-        from app.models.sync_task import SyncTask
-        sync_task_ids = [
-            (c.config_json or {}).get("sync_task_id")
-            for c in datax_items
-            if (c.config_json or {}).get("sync_task_id")
-        ]
-        if sync_task_ids:
-            tasks = db.query(SyncTask).filter(SyncTask.id.in_(sync_task_ids)).all()
-            sync_task_map = {t.id: t for t in tasks}
-
-    serialized_items = []
-    for c in items:
-        s = _serialize(c)
-        if c.type == "datax":
-            sync_task_id = (c.config_json or {}).get("sync_task_id")
-            if sync_task_id and sync_task_id in sync_task_map:
-                task = sync_task_map[sync_task_id]
-                s["config_json"] = {
-                    **s["config_json"],
-                    "source_table": task.source_table,
-                    "target_table": task.target_table,
-                }
-        serialized_items.append(s)
-
-    return {"total": total, "items": serialized_items}
+    return {"total": total, "items": [_serialize(c) for c in items]}
 
 
 @router.post("")
@@ -291,6 +272,14 @@ def create_component(
         cfg[key] = req.code
     if req.datasource_id is not None:
         cfg['datasource_id'] = req.datasource_id
+    # datax 类型必填字段校验
+    if req.type == "datax":
+        missing = []
+        for key in ("source_id", "target_id", "source_table", "target_table"):
+            if not cfg.get(key):
+                missing.append(key)
+        if missing:
+            raise HTTPException(status_code=400, detail=f"datax 组件缺少必填字段: {', '.join(missing)}")
     c = Component(
         name=req.name,
         type=req.type,
@@ -302,6 +291,57 @@ def create_component(
         created_by=current_user.id,
     )
     db.add(c)
+    db.flush()
+
+    # datax 类型：自动同步 SyncTask
+    if req.type == "datax":
+        from app.models.sync_task import SyncTask
+        import json
+        sync_task_id = cfg.get("sync_task_id")
+        task = None
+        if sync_task_id:
+            task = db.query(SyncTask).filter(SyncTask.id == sync_task_id).first()
+        if task:
+            task.component_id = c.id
+            task.name = req.name
+            task.source_id = cfg.get("source_id")
+            task.target_id = cfg.get("target_id")
+            task.source_table = cfg.get("source_table", "")
+            task.target_table = cfg.get("target_table", "")
+            task.sync_type = cfg.get("sync_type", "full")
+            task.increment_column = cfg.get("increment_column")
+            task.field_mapping = json.dumps(cfg.get("field_mapping", []), ensure_ascii=False) if cfg.get("field_mapping") else None
+            task.where_clause = cfg.get("where_clause")
+            task.split_pk = cfg.get("split_pk")
+            task.write_mode = cfg.get("write_mode", "insert")
+            task.channel = cfg.get("channel", 3)
+            task.pre_sql = json.dumps(cfg.get("pre_sql"), ensure_ascii=False) if cfg.get("pre_sql") else None
+            task.post_sql = json.dumps(cfg.get("post_sql"), ensure_ascii=False) if cfg.get("post_sql") else None
+        else:
+            task = SyncTask(
+                name=req.name,
+                component_id=c.id,
+                source_id=cfg.get("source_id"),
+                target_id=cfg.get("target_id"),
+                source_table=cfg.get("source_table", ""),
+                target_table=cfg.get("target_table", ""),
+                sync_type=cfg.get("sync_type", "full"),
+                increment_column=cfg.get("increment_column"),
+                field_mapping=json.dumps(cfg.get("field_mapping", []), ensure_ascii=False) if cfg.get("field_mapping") else None,
+                where_clause=cfg.get("where_clause"),
+                split_pk=cfg.get("split_pk"),
+                write_mode=cfg.get("write_mode", "insert"),
+                channel=cfg.get("channel", 3),
+                pre_sql=json.dumps(cfg.get("pre_sql"), ensure_ascii=False) if cfg.get("pre_sql") else None,
+                post_sql=json.dumps(cfg.get("post_sql"), ensure_ascii=False) if cfg.get("post_sql") else None,
+                status="draft",
+                created_by=current_user.id,
+            )
+            db.add(task)
+            db.flush()
+            cfg["sync_task_id"] = task.id
+            c.config_json = cfg
+
     db.commit()
     db.refresh(c)
     return _serialize(c)
@@ -450,11 +490,45 @@ def update_component(
         if ds_id is not None:
             cfg['datasource_id'] = ds_id
         updates['config_json'] = cfg
+    # datax 类型更新时校验必填字段
+    if c.type == "datax" and 'config_json' in updates:
+        new_cfg = updates['config_json'] or {}
+        missing = []
+        for k in ("source_id", "target_id", "source_table", "target_table"):
+            if not new_cfg.get(k):
+                missing.append(k)
+        if missing:
+            raise HTTPException(status_code=400, detail=f"datax 组件缺少必填字段: {', '.join(missing)}")
     for key, value in updates.items():
         setattr(c, key, value)
     if "config_json" in updates:
         c.status = STATUS_DRAFT
         c.version = (c.version or 1) + 1
+    # datax 类型：自动同步关联的 SyncTask
+    if c.type == "datax" and "config_json" in updates:
+        from app.models.sync_task import SyncTask
+        import json
+        cfg = c.config_json or {}
+        task = db.query(SyncTask).filter(SyncTask.component_id == comp_id).first()
+        if not task:
+            sync_task_id = cfg.get("sync_task_id")
+            if sync_task_id:
+                task = db.query(SyncTask).filter(SyncTask.id == sync_task_id).first()
+        if task:
+            task.name = c.name
+            task.source_id = cfg.get("source_id")
+            task.target_id = cfg.get("target_id")
+            task.source_table = cfg.get("source_table", "")
+            task.target_table = cfg.get("target_table", "")
+            task.sync_type = cfg.get("sync_type", "full")
+            task.increment_column = cfg.get("increment_column")
+            task.field_mapping = json.dumps(cfg.get("field_mapping", []), ensure_ascii=False) if cfg.get("field_mapping") else None
+            task.where_clause = cfg.get("where_clause")
+            task.split_pk = cfg.get("split_pk")
+            task.write_mode = cfg.get("write_mode", "insert")
+            task.channel = cfg.get("channel", 3)
+            task.pre_sql = json.dumps(cfg.get("pre_sql"), ensure_ascii=False) if cfg.get("pre_sql") else None
+            task.post_sql = json.dumps(cfg.get("post_sql"), ensure_ascii=False) if cfg.get("post_sql") else None
     db.commit()
     db.refresh(c)
     return _serialize(c)
@@ -473,6 +547,25 @@ def delete_component(
             detail=f"组件状态 {c.status},只有 draft/offline 状态允许删除;请先下线",
         )
     _check_workflow_refs(db, comp_id)
+
+    # datax 类型：级联删除关联的 SyncTask 和 Workflow
+    if c.type == "datax":
+        from app.models.sync_task import SyncTask
+        from app.models.workflow import Workflow
+
+        task = db.query(SyncTask).filter(SyncTask.component_id == comp_id).first()
+        if not task:
+            sync_task_id = (c.config_json or {}).get("sync_task_id")
+            if sync_task_id:
+                task = db.query(SyncTask).filter(SyncTask.id == sync_task_id).first()
+        wfs = db.query(Workflow).filter(
+            Workflow.steps_json.contains(f'"component_id": {comp_id}'),
+        ).all()
+        for wf in wfs:
+            db.delete(wf)
+        if task:
+            db.delete(task)
+
     db.delete(c)
     db.commit()
     return {"message": "删除成功"}
@@ -614,6 +707,134 @@ def quick_publish_component(
     db.commit()
     db.refresh(c)
     return {"message": "已发布", **_serialize(c)}
+
+
+@router.post("/{comp_id}/publish-as-workflow")
+async def publish_component_as_workflow(
+    comp_id: int,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(require_permission("component:publish")),
+):
+    """将 datax 组件发布为单节点工作流，同步到 DS。"""
+    import json
+    c = _get_or_404(db, comp_id)
+    if c.type != "datax":
+        raise HTTPException(status_code=400, detail="只有 datax 类型组件可发布为工作流")
+
+    cfg = c.config_json or {}
+    source_id = cfg.get("source_id")
+    target_id = cfg.get("target_id")
+    if not source_id or not target_id:
+        raise HTTPException(status_code=400, detail="组件缺少 source_id 或 target_id 配置")
+
+    from app.models.datasource import DataSource
+    source_ds = db.query(DataSource).filter(DataSource.id == source_id).first()
+    target_ds = db.query(DataSource).filter(DataSource.id == target_id).first()
+    if not source_ds or not target_ds:
+        raise HTTPException(status_code=400, detail="组件关联的数据源已被删除")
+
+    from app.core.datax_builder import build_datax_job
+    try:
+        datax_job = build_datax_job(
+            source_ds=source_ds,
+            source_table=cfg.get("source_table", ""),
+            target_ds=target_ds,
+            target_table=cfg.get("target_table", ""),
+            field_mapping=cfg.get("field_mapping", []),
+            sync_type=cfg.get("sync_type", "full"),
+            increment_column=cfg.get("increment_column"),
+            where_clause=cfg.get("where_clause"),
+            split_pk=cfg.get("split_pk"),
+            write_mode=cfg.get("write_mode", "insert"),
+            channel=cfg.get("channel", 3),
+            pre_sql=cfg.get("pre_sql"),
+            post_sql=cfg.get("post_sql"),
+            mask_password=False,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    new_raw_json = json.dumps(datax_job, ensure_ascii=False)
+    cfg["rawJson"] = new_raw_json
+    c.config_json = cfg
+    c.status = STATUS_ONLINE
+    db.commit()
+    db.refresh(c)
+
+    from app.models.workflow import Workflow
+    from app.models.sync_task import SyncTask
+    from app.models.resource_access import SysResourceAccess
+
+    # 查找已有 Workflow（通过 SyncTask.ds_workflow_id 或 steps_json 引用）
+    sync_task_id = cfg.get("sync_task_id")
+    wf = None
+    if sync_task_id:
+        task = db.query(SyncTask).filter(SyncTask.id == sync_task_id).first()
+        if task and task.ds_workflow_id:
+            wf = db.query(Workflow).filter(Workflow.id == task.ds_workflow_id).first()
+    if not wf:
+        wf = db.query(Workflow).filter(
+            Workflow.steps_json.contains(f'"component_id": {c.id}'),
+        ).first()
+
+    if wf:
+        wf.steps_json = [{"component_id": c.id, "name": c.name}]
+        wf.status = "draft"
+    else:
+        wf = Workflow(
+            name=f"[同步] {c.name}",
+            description=f"由组件 #{c.id} 自动生成的单节点工作流",
+            tags=[],
+            steps_json=[{"component_id": c.id, "name": c.name}],
+            dag_json=None,
+            cron_expression=None,
+            schedule_status="OFFLINE",
+            status="draft",
+            version=1,
+            priority=3,
+            created_by=current_user.id,
+        )
+        db.add(wf)
+        db.add(SysResourceAccess(
+            resource_type="workflow",
+            resource_id=wf.id,
+            subject_type="user",
+            subject_id=current_user.id,
+            permission="admin",
+            granted_by=current_user.id,
+        ))
+
+    db.flush()
+
+    # 更新 SyncTask 的 ds_workflow_id
+    if sync_task_id:
+        task = db.query(SyncTask).filter(SyncTask.id == sync_task_id).first()
+        if task:
+            task.ds_workflow_id = wf.id
+
+    from app.api.workflow import _sync_to_ds
+    pd_code = None
+    try:
+        pd_code, schedule_id = await _sync_to_ds(db, wf)
+        wf.ds_process_code = pd_code
+        wf.ds_schedule_id = schedule_id
+        wf.status = "online"
+    except Exception as e:
+        db.rollback()
+        if pd_code:
+            from app.core.ds_client import get_ds_client
+            try:
+                await get_ds_client().delete_process_definition(pd_code)
+            except Exception:
+                pass
+        raise HTTPException(status_code=502, detail=f"DS 同步失败：{e}")
+
+    db.commit()
+    return {
+        "component_id": c.id,
+        "workflow_id": wf.id,
+        "ds_process_code": wf.ds_process_code,
+    }
 
 
 @router.post("/{comp_id}/offline")

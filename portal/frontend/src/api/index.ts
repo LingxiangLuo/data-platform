@@ -148,6 +148,8 @@ export const testComponent = (id: number) => api.post(`/components/${id}/test`)
 export const publishComponent = (id: number) => api.post(`/components/${id}/publish`)
 export const offlineComponent = (id: number) => api.post(`/components/${id}/offline`)
 export const runComponent = (id: number) => api.post(`/components/${id}/run`)
+export const publishComponentAsWorkflow = (id: number) =>
+  api.post(`/components/${id}/publish-as-workflow`)
 export const runSqlAdhoc = (data: { datasource_id: number; sql: string }) =>
   api.post('/components/run-sql', data, { timeout: 60000 })
 export const runComponentScript = (id: number, datasourceId?: number) =>

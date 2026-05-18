@@ -176,8 +176,7 @@
         <!-- DataX 同步任务面板（当前 tab 是 datax 类型时显示） -->
         <template v-if="activeTab && activeTab.language === 'datax'">
           <SyncTaskCanvas
-            :task-id="activeTab.syncTaskId ?? null"
-            :projects="projects"
+            :comp-id="activeTab.componentId ?? null"
             @saved="loadComponents"
             style="flex: 1; overflow: auto;"
           />
@@ -294,7 +293,6 @@
     <!-- DataX 同步任务向导 -->
     <SyncTaskWizard
       v-model:visible="wizardVisible"
-      :projects="projects"
       @saved="loadComponents"
     />
   </div>
@@ -317,7 +315,7 @@ import {
   getComponentFolders, createComponentFolder, renameComponentFolder, deleteComponentFolder,
   setComponentStatus, resumeComponent,
   moveComponent, reorderComponents, moveComponentFolder,
-  getSyncTasks, deleteSyncTask, getProjects,
+  getProjects,
 } from '../api'
 import SyncTaskCanvas from '../components/SyncTaskCanvas.vue'
 import SyncTaskWizard from '../components/SyncTaskWizard.vue'
@@ -337,7 +335,6 @@ interface Tab {
   componentId?: number
   folderId?: number | null
   datasourceId?: number
-  syncTaskId?: number | null
   dirty: boolean
 }
 
@@ -500,7 +497,6 @@ function openComp(c: ComponentItem) {
       language: 'datax',
       componentId: c.id,
       folderId: c.folder_id ?? null,
-      syncTaskId: cfg.sync_task_id ?? null,
       dirty: false,
     })
     switchTab(key)
@@ -634,17 +630,8 @@ async function setCompStatus(c: ComponentItem, status: string) {
 async function confirmDeleteComp(c: ComponentItem) {
   if (!confirm(`确定删除组件「${c.name}」？此操作不可恢复`)) return
   try {
-    if (c.type === 'datax') {
-      // 后端 delete_task 会级联删除关联的 Component 和 Workflow
-      const syncTaskId = c.config_json?.sync_task_id
-      if (syncTaskId) {
-        await deleteSyncTask(syncTaskId)
-      } else {
-        await deleteComponent(c.id)
-      }
-    } else {
-      await deleteComponent(c.id)
-    }
+    // 后端 delete_component 对所有类型均已处理级联删除（包括 datax 的 SyncTask + Workflow）
+    await deleteComponent(c.id)
     Message.success('已删除')
     const idx = tabs.value.findIndex(t => t.componentId === c.id)
     if (idx >= 0) closeTab(tabs.value[idx].key)
@@ -717,6 +704,8 @@ async function confirmSave() {
 }
 
 async function doSave(tab: Tab) {
+  // datax 组件由 SyncTaskCanvas/SyncTaskWizard 独立管理，不走通用保存逻辑
+  if (tab.language === 'datax') return
   saving.value = true
   try {
     // 构造 config_json

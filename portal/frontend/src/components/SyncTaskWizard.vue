@@ -129,11 +129,6 @@
               <a-form-item label="任务名称" required>
                 <a-input v-model="form.name" placeholder="例如 dim_brand → dwd_brand" />
               </a-form-item>
-              <a-form-item label="所属项目">
-                <a-select v-model="form.project_id" placeholder="不选 = 未分组" allow-clear>
-                  <a-option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</a-option>
-                </a-select>
-              </a-form-item>
               <a-form-item label="同步方式">
                 <a-radio-group v-model="form.sync_type" type="button">
                   <a-radio value="full">全量</a-radio>
@@ -190,15 +185,14 @@ import { IconInfoCircle, IconCode, IconRefresh } from '@arco-design/web-vue/es/i
 import FieldMappingCanvas from './FieldMappingCanvas.vue'
 import {
   getDatasources, getMetadataTables, getMetadataColumns,
-  createSyncTask, updateSyncTask, getSyncTask,
-  previewSyncTaskUnsaved, publishSyncTaskAsWorkflow, createComponent, updateComponent, getComponents,
+  getSyncTask,
+  previewSyncTaskUnsaved, createComponent, updateComponent, getComponents,
+  getComponent, publishComponentAsWorkflow,
 } from '../api'
 
 const props = defineProps<{
   visible: boolean
   editingId?: number | null
-  defaultProjectId?: number | null
-  projects: any[]
 }>()
 const emit = defineEmits<{
   'update:visible': [v: boolean]
@@ -221,7 +215,6 @@ const dstColumns = ref<any[]>([])
 
 const form = reactive<any>({
   name: '',
-  project_id: null,
   source_id: null,
   target_id: null,
   source_table: '',
@@ -349,9 +342,7 @@ async function save() {
   if (!form.name) { Message.warning('请填写任务名称'); return }
   saving.value = true
   try {
-    const payload = {
-      name: form.name,
-      project_id: form.project_id,
+    const config_json = {
       source_id: form.source_id,
       target_id: form.target_id,
       source_table: form.source_table,
@@ -359,38 +350,28 @@ async function save() {
       sync_type: form.sync_type,
       increment_column: form.increment_column,
       field_mapping: form.field_mapping,
+      where_clause: form.where_clause || null,
+      split_pk: form.split_pk || null,
+      write_mode: form.write_mode || 'insert',
+      channel: form.channel || 3,
     }
     if (props.editingId) {
-      await updateSyncTask(props.editingId, payload)
-      // 同步更新关联 Component 的 config_json（保持 source_table/target_table 显示一致）
-      try {
-        const res: any = await getComponents({ type: 'datax', page_size: 500 })
-        const comps: any[] = res?.items || res?.data || res || []
-        const comp = comps.find((c: any) => c.config_json?.sync_task_id === props.editingId)
-        if (comp) {
-          await updateComponent(comp.id, {
-            name: form.name,
-            config_json: {
-              ...comp.config_json,
-              source_table: form.source_table,
-              target_table: form.target_table,
-            },
-          })
-        }
-      } catch {}
-      Message.success('修改成功')
+      // 编辑：通过 sync_task_id 查找关联 Component 并更新
+      const res: any = await getComponents({ type: 'datax', page_size: 500 })
+      const comps: any[] = res?.items || res?.data || res || []
+      const comp = comps.find((c: any) => c.config_json?.sync_task_id === props.editingId)
+      if (comp) {
+        await updateComponent(comp.id, { name: form.name, config_json })
+        Message.success('修改成功')
+      } else {
+        Message.error('未找到关联的 datax 组件')
+      }
     } else {
-      const task: any = await createSyncTask(payload)
-      // 同时创建 datax 类型的 Component（草稿状态），使其出现在组件树
       await createComponent({
         name: form.name,
         type: 'datax',
         description: `DataX 同步：${form.source_table} → ${form.target_table}`,
-        config_json: {
-          sync_task_id: task.id,
-          source_table: form.source_table,
-          target_table: form.target_table,
-        },
+        config_json,
       })
       Message.success('创建成功')
     }
@@ -407,10 +388,7 @@ async function saveAndPublishAsWorkflow() {
   if (!form.name) { Message.warning('请填写任务名称'); return }
   publishing.value = true
   try {
-    let taskId: number
-    const payload = {
-      name: form.name,
-      project_id: form.project_id,
+    const config_json = {
       source_id: form.source_id,
       target_id: form.target_id,
       source_table: form.source_table,
@@ -418,15 +396,29 @@ async function saveAndPublishAsWorkflow() {
       sync_type: form.sync_type,
       increment_column: form.increment_column,
       field_mapping: form.field_mapping,
+      where_clause: form.where_clause || null,
+      split_pk: form.split_pk || null,
+      write_mode: form.write_mode || 'insert',
+      channel: form.channel || 3,
     }
+    let compId: number
     if (props.editingId) {
-      await updateSyncTask(props.editingId, payload)
-      taskId = props.editingId
+      const res: any = await getComponents({ type: 'datax', page_size: 500 })
+      const comps: any[] = res?.items || res?.data || res || []
+      const comp = comps.find((c: any) => c.config_json?.sync_task_id === props.editingId)
+      if (!comp) { Message.error('未找到关联的 datax 组件'); publishing.value = false; return }
+      await updateComponent(comp.id, { name: form.name, config_json })
+      compId = comp.id
     } else {
-      const res: any = await createSyncTask(payload)
-      taskId = res.id
+      const res: any = await createComponent({
+        name: form.name,
+        type: 'datax',
+        description: `DataX 同步：${form.source_table} → ${form.target_table}`,
+        config_json,
+      })
+      compId = res.id
     }
-    const wf: any = await publishSyncTaskAsWorkflow(taskId)
+    const wf: any = await publishComponentAsWorkflow(compId)
     Message.success(`已发布为工作流 #${wf.workflow_id}，DS 流程码：${wf.ds_process_code}`)
     emit('saved')
     emit('update:visible', false)
@@ -440,7 +432,7 @@ async function saveAndPublishAsWorkflow() {
 function resetForm() {
   step.value = 0
   Object.assign(form, {
-    name: '', project_id: props.defaultProjectId || null,
+    name: '',
     source_id: null, target_id: null,
     source_table: '', target_table: '',
     sync_type: 'full', increment_column: null,
@@ -455,7 +447,6 @@ async function loadForEdit() {
   if (!props.editingId) return
   const t: any = await getSyncTask(props.editingId)
   form.name = t.name
-  form.project_id = t.project_id
   form.source_id = t.source_id
   form.target_id = t.target_id
   form.source_table = t.source_table

@@ -415,6 +415,8 @@ def _generate_ddl_sql(db_type: str, table: str, columns: List[DDLColumn]) -> str
             return f"[{name}]"
         if t == "oracle":
             return f'"{name.upper()}"'
+        if t == "postgresql":
+            return f'"{name}"'
         return f"`{name}`"
 
     lines: List[str] = []

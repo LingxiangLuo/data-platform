@@ -315,125 +315,16 @@ async def publish_as_workflow(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(require_permission("sync:write")),
 ):
-    """将同步任务发布为单节点工作流：自动创建 datax 组件 + 单步工作流，并同步到 DS。"""
-    import json
+    """兼容端点：将同步任务发布为工作流（委托给 Component.publish-as-workflow）。"""
     from app.models.component import Component
-    from app.models.workflow import Workflow
-    from app.models.resource_access import SysResourceAccess
+    from app.api.component import publish_component_as_workflow
 
-    task = db.query(SyncTask).filter(SyncTask.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
-
-    source_ds = db.query(DataSource).filter(DataSource.id == task.source_id).first()
-    target_ds = db.query(DataSource).filter(DataSource.id == task.target_id).first()
-    if not source_ds or not target_ds:
-        raise HTTPException(status_code=400, detail="任务关联的数据源已被删除")
-
-    from app.core.datax_builder import build_for_sync_task
-    try:
-        datax_job = build_for_sync_task(task, source_ds, target_ds, mask_password=False)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    new_raw_json = json.dumps(datax_job, ensure_ascii=False)
-    config = {
-        "sync_task_id": task.id,
-        "source_table": task.source_table,
-        "target_table": task.target_table,
-        "rawJson": new_raw_json,
-    }
-
-    # 幂等：若已存在关联的 datax 组件，只更新 config_json 和 rawJson，不重复创建
-    existing_comp = (
-        db.query(Component)
-        .filter(Component.type == "datax")
-        .all()
-    )
-    existing_comp = next(
-        (c for c in existing_comp if (c.config_json or {}).get("sync_task_id") == task.id),
+    comps = db.query(Component).filter(Component.type == "datax").all()
+    comp = next(
+        (c for c in comps if (c.config_json or {}).get("sync_task_id") == task_id),
         None,
     )
-    if existing_comp:
-        existing_comp.config_json = config
-        db.commit()
-        db.refresh(existing_comp)
-        wf_id = task.ds_workflow_id
-        return {
-            "component_id": existing_comp.id,
-            "workflow_id": wf_id,
-            "ds_process_code": None,
-        }
+    if not comp:
+        raise HTTPException(status_code=404, detail="未找到关联的 datax 组件，请先保存任务")
 
-    comp_name = f"[DataX] {task.name}"
-    comp = Component(
-        name=comp_name,
-        type="datax",
-        description=f"由同步任务 #{task.id} 自动生成",
-        config_json=config,
-        status="online",
-        version=1,
-        created_by=current_user.id,
-    )
-    db.add(comp)
-    db.flush()
-
-    db.add(SysResourceAccess(
-        resource_type="component",
-        resource_id=comp.id,
-        subject_type="user",
-        subject_id=current_user.id,
-        permission="admin",
-        granted_by=current_user.id,
-    ))
-
-    wf_name = f"[同步] {task.name}"
-    wf = Workflow(
-        name=wf_name,
-        description=f"由同步任务 #{task.id} 自动生成的单节点工作流",
-        tags=[],
-        steps_json=[{"component_id": comp.id, "name": comp_name}],
-        dag_json=None,
-        cron_expression=None,
-        schedule_status="OFFLINE",
-        status="draft",
-        version=1,
-        priority=3,
-        created_by=current_user.id,
-    )
-    db.add(wf)
-    db.flush()
-
-    db.add(SysResourceAccess(
-        resource_type="workflow",
-        resource_id=wf.id,
-        subject_type="user",
-        subject_id=current_user.id,
-        permission="admin",
-        granted_by=current_user.id,
-    ))
-
-    from app.api.workflow import _sync_to_ds
-    pd_code = None
-    try:
-        pd_code, schedule_id = await _sync_to_ds(db, wf)
-        wf.ds_process_code = pd_code
-        wf.ds_schedule_id = schedule_id
-        wf.status = "online"
-        task.ds_workflow_id = wf.id
-    except Exception as e:
-        db.rollback()
-        if pd_code:
-            from app.core.ds_client import get_ds_client
-            try:
-                await get_ds_client().delete_process_definition(pd_code)
-            except Exception:
-                pass
-        raise HTTPException(status_code=502, detail=f"DS 同步失败：{e}")
-
-    db.commit()
-    return {
-        "component_id": comp.id,
-        "workflow_id": wf.id,
-        "ds_process_code": wf.ds_process_code,
-    }
+    return await publish_component_as_workflow(comp.id, db, current_user)

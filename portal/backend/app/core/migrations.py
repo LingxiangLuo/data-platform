@@ -15,6 +15,8 @@ def run_all_migrations():
     _migrate_sys_user_oauth_unique()
     _migrate_sys_notify_channel_table()
     _migrate_alert_rule_channel_ids()
+    _migrate_sync_task_component_id()
+    _migrate_datax_to_component()
 
 
 def _migrate_sync_task_columns():
@@ -219,3 +221,92 @@ def _migrate_alert_rule_channel_ids():
                 "ALTER TABLE alert_rule ADD COLUMN notify_channel_ids JSON NULL COMMENT '通知渠道ID列表'"
             ))
             conn.commit()
+
+
+def _migrate_sync_task_component_id():
+    """为 sync_task 添加 component_id 外键字段"""
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sync_task'"
+        )).fetchall()
+        existing = {r[0] for r in rows}
+        if 'component_id' not in existing:
+            conn.execute(text(
+                "ALTER TABLE sync_task ADD COLUMN component_id BIGINT NULL COMMENT '关联组件ID'"
+            ))
+            conn.commit()
+
+
+def _migrate_datax_to_component():
+    """将 SyncTask 数据迁移到 Component.config_json，建立 Component 为主实体的架构。
+    幂等：已迁移的不会重复处理。"""
+    import json
+    from app.core.database import SessionLocal
+    from app.models.sync_task import SyncTask
+    from app.models.component import Component
+
+    db = SessionLocal()
+    try:
+        tasks = db.query(SyncTask).all()
+        if not tasks:
+            return
+        # 检查是否已迁移（所有 task 都有 component_id）
+        if all(t.component_id is not None for t in tasks):
+            return
+
+        for task in tasks:
+            # 已有 component_id 说明已迁移过
+            if task.component_id:
+                continue
+
+            # 查找通过旧关联方式匹配的 Component（config_json.sync_task_id）
+            comps = db.query(Component).filter(Component.type == "datax").all()
+            existing = next(
+                (c for c in comps if (c.config_json or {}).get("sync_task_id") == task.id),
+                None,
+            )
+
+            cfg = {
+                "source_id": task.source_id,
+                "target_id": task.target_id,
+                "source_table": task.source_table,
+                "target_table": task.target_table,
+                "sync_type": task.sync_type or "full",
+                "increment_column": task.increment_column,
+                "field_mapping": json.loads(task.field_mapping) if task.field_mapping else [],
+                "where_clause": task.where_clause,
+                "split_pk": task.split_pk,
+                "write_mode": task.write_mode or "insert",
+                "channel": task.channel or 3,
+                "pre_sql": json.loads(task.pre_sql) if task.pre_sql else None,
+                "post_sql": json.loads(task.post_sql) if task.post_sql else None,
+            }
+
+            status_map = {"draft": "draft", "active": "online", "paused": "paused"}
+            comp_status = status_map.get(task.status, "draft")
+
+            if existing:
+                existing.config_json = cfg
+                existing.status = comp_status
+                db.flush()
+                task.component_id = existing.id
+            else:
+                comp = Component(
+                    name=task.name,
+                    type="datax",
+                    description=f"DataX 同步：{task.source_table} → {task.target_table}",
+                    config_json=cfg,
+                    status=comp_status,
+                    version=1,
+                )
+                db.add(comp)
+                db.flush()
+                task.component_id = comp.id
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()

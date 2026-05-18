@@ -10,8 +10,8 @@
           size="large"
           :disabled="isOnline"
         />
-        <a-tag :color="statusColors[task?.status || 'draft']" size="small">
-          {{ statusMap[task?.status || 'draft'] }}
+        <a-tag :color="statusColors[comp?.status || 'draft']" size="small">
+          {{ statusMap[comp?.status || 'draft'] }}
         </a-tag>
         <span class="path-hint" v-if="form.source_table || form.target_table">
           {{ form.source_table || '?' }} → {{ form.target_table || '?' }}
@@ -36,7 +36,7 @@
           保存
         </a-button>
         <a-button
-          v-if="props.taskId && !isOnline"
+          v-if="props.compId && !isOnline"
           status="success"
           @click="handleOnline"
           :loading="toggling"
@@ -45,7 +45,7 @@
           上线
         </a-button>
         <a-button
-          v-if="props.taskId && isOnline"
+          v-if="props.compId && isOnline"
           @click="handleOffline"
           :loading="toggling"
         >
@@ -60,14 +60,6 @@
       <section class="card-section">
         <div class="section-title">基础信息</div>
         <div class="form-row">
-          <div class="form-item">
-            <label>所属项目</label>
-            <a-select v-model="form.project_id" placeholder="选择项目" :disabled="isOnline">
-              <a-option v-for="p in projects" :key="p.id" :value="p.id">
-                {{ p.name }}
-              </a-option>
-            </a-select>
-          </div>
           <div class="form-item">
             <label>通道数</label>
             <a-input-number v-model="form.channel" :min="1" :max="32" placeholder="3" :disabled="isOnline" />
@@ -275,28 +267,26 @@ import {
   IconSave, IconFolder, IconLock, IconUnlock,
 } from '@arco-design/web-vue/es/icon'
 import {
-  getSyncTask, createSyncTask, updateSyncTask, previewSyncTaskUnsaved,
+  getComponent, createComponent, updateComponent,
+  previewSyncTaskUnsaved,
   getDatasources, getMetadataTables, getMetadataColumns,
-  generateDDL, executeDDL, setSyncTaskStatus,
-  getComponents, updateComponent, createComponent,
+  generateDDL, executeDDL,
+  publishComponentAsWorkflow, offlineComponent,
 } from '../api'
 import FieldMappingCanvas from './FieldMappingCanvas.vue'
 
 const props = defineProps<{
-  taskId: number | null  // null = 新建态
-  projectId?: number | null
-  projects: any[]
+  compId: number | null  // null = 新建态
 }>()
 
-const emit = defineEmits<{ 'saved': [task: any]; 'open-script': []; 'status-changed': [task: any] }>()
+const emit = defineEmits<{ 'saved': [comp: any]; 'open-script': []; 'status-changed': [comp: any] }>()
 
 const ready = ref(true)
-const task = ref<any>(null)
+const comp = ref<any>(null)
 const datasources = ref<any[]>([])
 
 const form = reactive<any>({
   name: '',
-  project_id: null,
   source_id: null,
   target_id: null,
   source_table: '',
@@ -319,7 +309,7 @@ const targetColumns = ref<any[]>([])
 const sourceTableOptions = ref<string[]>([])
 const targetTableOptions = ref<string[]>([])
 
-const isOnline = computed(() => task.value?.status === 'active')
+const isOnline = computed(() => comp.value?.status === 'online')
 const toggling = ref(false)
 
 const saving = ref(false)
@@ -332,10 +322,12 @@ const ddlText = ref('')
 const ddlExecuting = ref(false)
 
 const statusMap: Record<string, string> = {
-  draft: '草稿', active: '运行中', paused: '已暂停', error: '异常',
+  draft: '草稿', online: '已上线', offline: '已下线', paused: '已暂停',
+  developing: '开发中', testing: '测试中', reviewing: '审核中', tested: '已测试',
 }
 const statusColors: Record<string, string> = {
-  draft: 'gray', active: 'green', paused: 'orange', error: 'red',
+  draft: 'gray', online: 'green', offline: 'blue', paused: 'orange',
+  developing: 'blue', testing: 'orange', reviewing: 'cyan', tested: 'green',
 }
 
 const dsFilter = (input: string, opt: any) => {
@@ -351,12 +343,11 @@ async function loadDatasources() {
   } catch {}
 }
 
-async function loadTask() {
-  if (!props.taskId) {
+async function loadComp() {
+  if (!props.compId) {
     // 新建态：重置
     Object.assign(form, {
       name: '',
-      project_id: props.projectId ?? null,
       source_id: null,
       target_id: null,
       source_table: '',
@@ -373,29 +364,29 @@ async function loadTask() {
     postSqlText.value = ''
     sourceColumns.value = []
     targetColumns.value = []
-    task.value = null
+    comp.value = null
     return
   }
   try {
-    const res: any = await getSyncTask(props.taskId)
-    task.value = res
+    const res: any = await getComponent(props.compId)
+    comp.value = res
+    const cfg = res.config_json || {}
     Object.assign(form, {
       name: res.name,
-      project_id: res.project_id,
-      source_id: res.source_id,
-      target_id: res.target_id,
-      source_table: res.source_table,
-      target_table: res.target_table,
-      sync_type: res.sync_type || 'full',
-      increment_column: res.increment_column,
-      field_mapping: res.field_mapping || [],
-      where_clause: res.where_clause || '',
-      split_pk: res.split_pk,
-      write_mode: res.write_mode || 'insert',
-      channel: res.channel ?? 3,
+      source_id: cfg.source_id ?? null,
+      target_id: cfg.target_id ?? null,
+      source_table: cfg.source_table || '',
+      target_table: cfg.target_table || '',
+      sync_type: cfg.sync_type || 'full',
+      increment_column: cfg.increment_column || null,
+      field_mapping: cfg.field_mapping || [],
+      where_clause: cfg.where_clause || '',
+      split_pk: cfg.split_pk || null,
+      write_mode: cfg.write_mode || 'insert',
+      channel: cfg.channel ?? 3,
     })
-    preSqlText.value = (res.pre_sql || []).join('\n')
-    postSqlText.value = (res.post_sql || []).join('\n')
+    preSqlText.value = (cfg.pre_sql || []).join('\n')
+    postSqlText.value = (cfg.post_sql || []).join('\n')
     if (form.source_id && form.source_table) await loadSourceColumns()
     if (form.target_id && form.target_table) await loadTargetColumns()
   } catch {}
@@ -469,7 +460,6 @@ function buildPayload() {
   const postSql = postSqlText.value.split('\n').map(s => s.trim()).filter(Boolean)
   return {
     name: form.name,
-    project_id: form.project_id,
     source_id: form.source_id,
     target_id: form.target_id,
     source_table: form.source_table,
@@ -495,44 +485,40 @@ async function handleSave() {
   }
   saving.value = true
   try {
-    const payload = buildPayload()
+    const preSql = preSqlText.value.split('\n').map(s => s.trim()).filter(Boolean)
+    const postSql = postSqlText.value.split('\n').map(s => s.trim()).filter(Boolean)
+    const config_json = {
+      source_id: form.source_id,
+      target_id: form.target_id,
+      source_table: form.source_table,
+      target_table: form.target_table,
+      sync_type: form.sync_type,
+      increment_column: form.increment_column,
+      field_mapping: form.field_mapping,
+      where_clause: form.where_clause || null,
+      split_pk: form.split_pk || null,
+      write_mode: form.write_mode || 'insert',
+      channel: form.channel || 3,
+      pre_sql: preSql.length ? preSql : null,
+      post_sql: postSql.length ? postSql : null,
+    }
     let res: any
-    if (props.taskId) {
-      res = await updateSyncTask(props.taskId, payload)
-      // 同步更新关联 Component 的 name 和 config_json（保持左侧树显示一致）
-      try {
-        const compRes: any = await getComponents({ type: 'datax', page_size: 500 })
-        const comps: any[] = compRes?.items || compRes?.data || []
-        const comp = comps.find((c: any) => c.config_json?.sync_task_id === props.taskId)
-        if (comp) {
-          await updateComponent(comp.id, {
-            name: form.name,
-            config_json: {
-              ...comp.config_json,
-              source_table: form.source_table,
-              target_table: form.target_table,
-            },
-          })
-        }
-      } catch {}
+    if (props.compId) {
+      res = await updateComponent(props.compId, {
+        name: form.name,
+        config_json,
+      })
       Message.success('任务已更新')
     } else {
-      res = await createSyncTask(payload)
-      // 同时创建 datax 类型的 Component，使其出现在组件树
-      try {
-        await createComponent({
-          name: form.name,
-          type: 'datax',
-          description: `DataX 同步：${form.source_table} → ${form.target_table}`,
-          config_json: {
-            sync_task_id: res.id,
-            source_table: form.source_table,
-            target_table: form.target_table,
-          },
-        })
-      } catch {}
+      res = await createComponent({
+        name: form.name,
+        type: 'datax',
+        description: `DataX 同步：${form.source_table} → ${form.target_table}`,
+        config_json,
+      })
       Message.success('任务已创建')
     }
+    comp.value = res
     emit('saved', res)
   } catch (e: any) {
     // 错误消息已由拦截器展示
@@ -542,22 +528,22 @@ async function handleSave() {
 }
 
 async function handleOnline() {
-  if (!props.taskId) { Message.warning('请先保存任务'); return }
+  if (!props.compId) { Message.warning('请先保存任务'); return }
   toggling.value = true
   try {
-    const res: any = await setSyncTaskStatus(props.taskId, 'active')
-    task.value = res
-    Message.success('任务已上线，进入只读保护')
-    emit('status-changed', res)
+    const res: any = await publishComponentAsWorkflow(props.compId)
+    comp.value = { ...comp.value, status: 'online', ds_task_code: res.ds_process_code }
+    Message.success('任务已上线并发布到 DS')
+    emit('status-changed', comp.value)
   } catch {} finally { toggling.value = false }
 }
 
 async function handleOffline() {
-  if (!props.taskId) return
+  if (!props.compId) return
   toggling.value = true
   try {
-    const res: any = await setSyncTaskStatus(props.taskId, 'draft')
-    task.value = res
+    const res: any = await offlineComponent(props.compId)
+    comp.value = res
     Message.success('任务已下线，可以编辑')
     emit('status-changed', res)
   } catch {} finally { toggling.value = false }
@@ -640,11 +626,11 @@ async function confirmExecuteDDL() {
   }
 }
 
-watch(() => props.taskId, () => loadTask())
+watch(() => props.compId, () => loadComp())
 
 onMounted(async () => {
   await loadDatasources()
-  await loadTask()
+  await loadComp()
 })
 </script>
 
