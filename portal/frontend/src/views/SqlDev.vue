@@ -177,7 +177,8 @@
         <template v-if="activeTab && activeTab.language === 'datax'">
           <SyncTaskCanvas
             :comp-id="activeTab.componentId ?? null"
-            @saved="loadComponents"
+            @saved="onSyncTaskSaved"
+            @status-changed="onSyncStatusChanged"
             style="flex: 1; overflow: auto;"
           />
         </template>
@@ -320,7 +321,7 @@ import {
 import SyncTaskCanvas from '../components/SyncTaskCanvas.vue'
 import SyncTaskWizard from '../components/SyncTaskWizard.vue'
 import { useUserStore } from '../stores/user'
-import type { ComponentItem, DatasourceItem, FolderItem, ProjectItem } from '../types/component'
+import type { ComponentItem, DatasourceItem, FolderItem, ProjectItem, ComponentStatus } from '../types/component'
 import { statusLabel, statusColor, manualStatusOptions } from '../types/component'
 
 const userStore = useUserStore()
@@ -409,15 +410,25 @@ function compCountByType(type: string) {
 }
 
 // ---- 树结构 ----
-interface TreeNode {
+interface FolderTreeNode {
   nodeKey: string
-  kind: 'folder' | 'component'
+  kind: 'folder'
   id: number
   name: string
   depth: number
   folderType: string
-  data?: ComponentItem | FolderItem
+  data: FolderItem
 }
+interface CompTreeNode {
+  nodeKey: string
+  kind: 'component'
+  id: number
+  name: string
+  depth: number
+  folderType: string
+  data: ComponentItem
+}
+type TreeNode = FolderTreeNode | CompTreeNode
 
 function flatTree(type: string): TreeNode[] {
   const kw = searchKw.value.toLowerCase()
@@ -447,7 +458,7 @@ function flatTree(type: string): TreeNode[] {
     for (const f of childFolders) {
       // 搜索时只显示有匹配项的文件夹
       if (searching && !folderHasMatch(f.id)) continue
-      result.push({ nodeKey: `f-${f.id}`, kind: 'folder', id: f.id, name: f.name, depth, folderType: type })
+      result.push({ nodeKey: `f-${f.id}`, kind: 'folder', id: f.id, name: f.name, depth, folderType: type, data: f })
       // 搜索时强制展开；否则按用户折叠状态
       if (searching || !folderCollapsed[f.id]) {
         traverse(f.id, depth + 1)
@@ -703,6 +714,24 @@ async function confirmSave() {
   pendingSaveTab.value = null
 }
 
+async function onSyncTaskSaved(comp: any) {
+  await loadComponents()
+  // 更新当前 datax tab 的状态
+  const tab = activeTab.value
+  if (tab && tab.language === 'datax') {
+    tab.componentId = comp.id
+    const cfg = comp.config_json || {}
+    const src = cfg.source_table || ''
+    const dst = cfg.target_table || ''
+    tab.name = src && dst ? `${src} → ${dst}` : comp.name
+    tab.dirty = false
+  }
+}
+
+async function onSyncStatusChanged(_comp: any) {
+  await loadComponents()
+}
+
 async function doSave(tab: Tab) {
   // datax 组件由 SyncTaskCanvas/SyncTaskWizard 独立管理，不走通用保存逻辑
   if (tab.language === 'datax') return
@@ -787,6 +816,7 @@ function typeLabel(type: string): string {
 }
 
 function buildCompMenuItems(node: TreeNode): MenuItem[] {
+  if (node.kind !== 'component') return []
   const c = node.data
   const t = c.type as string
   const items: MenuItem[] = []
@@ -821,7 +851,7 @@ function buildCompMenuItems(node: TreeNode): MenuItem[] {
     items.push({
       key: 'status',
       label: '设置状态',
-      children: buildStatusSubmenu(c.status),
+      children: buildStatusSubmenu(c.status as any),
     })
   }
   items.push({ divider: true })
@@ -850,7 +880,7 @@ function buildFolderMenuItems(node: TreeNode): MenuItem[] {
   return items
 }
 
-function buildStatusSubmenu(current: string): MenuItem[] {
+function buildStatusSubmenu(current: ComponentStatus): MenuItem[] {
   const opts = manualStatusOptions(current)
   return opts.map(o => ({
     key: `status-${o.value}`,
@@ -928,7 +958,7 @@ async function onMenuSelect(key: string) {
     if (lang === 'datax') {
       wizardVisible.value = true
     } else {
-      const folderId = targetNode.kind === 'folder' ? targetNode.id : (targetNode.data?.folder_id ?? null)
+      const folderId = targetNode.kind === 'folder' ? targetNode.id : targetNode.data.folder_id ?? null
       newBlankTab(lang, folderId)
     }
   }
@@ -957,7 +987,7 @@ async function doPaste(targetNode: TreeNode) {
   const cb = clipboard.value
   if (!cb) return
   if (cb.kind === 'component') {
-    const targetFolderId = targetNode.kind === 'folder' ? targetNode.id : (targetNode.data?.folder_id ?? null)
+    const targetFolderId = targetNode.kind === 'folder' ? targetNode.id : targetNode.data.folder_id ?? null
     if (cb.action === 'copy') {
       // 复制：创建新组件
       const src = components.value.find(c => c.id === cb.id)
@@ -1039,14 +1069,14 @@ function onDragStart(e: DragEvent, node: TreeNode) {
   dragState.draggingId = node.id
   dragState.dragKind = node.kind
   dragState.dragFolderType = node.folderType
-  dragState.dragFolderId = node.data?.folder_id ?? null
+  dragState.dragFolderId = node.kind === 'component' ? node.data.folder_id ?? null : null
   e.dataTransfer!.effectAllowed = 'move'
   e.dataTransfer!.setData('application/json', JSON.stringify({
     id: node.id,
     kind: node.kind,
     folderType: node.folderType,
-    type: node.data?.type,
-    folderId: node.data?.folder_id,
+    type: node.kind === 'component' ? node.data.type : undefined,
+    folderId: node.kind === 'component' ? node.data.folder_id : undefined,
   }))
 }
 
@@ -1123,17 +1153,18 @@ async function onDrop(e: DragEvent, targetNode: TreeNode) {
   // 跨类型忽略
   if (dragState.dragFolderType !== targetNode.folderType) return
 
+  const targetFolderId = targetNode.kind === 'component' ? targetNode.data.folder_id : null
   if (data.kind === 'component' && targetNode.kind === 'folder') {
     // 组件拖到文件夹 = 移动
     await doMoveComponent(data.id, targetNode.id)
   } else if (data.kind === 'component' && targetNode.kind === 'component') {
     // 组件拖到组件
-    if (data.folderId === targetNode.data?.folder_id) {
+    if (data.folderId === targetFolderId) {
       // 同文件夹 = 排序
       await doReorderBetween(data.id, targetNode.id, (dragState.dropPosition === 'inside' ? 'before' : dragState.dropPosition) ?? 'before')
     } else {
       // 跨文件夹 = 移到目标文件夹（根目录用 0）
-      await doMoveComponent(data.id, targetNode.data?.folder_id ?? 0)
+      await doMoveComponent(data.id, targetFolderId ?? 0)
       // 等待数据刷新后再排序
       await loadComponents()
       await doReorderBetween(data.id, targetNode.id, (dragState.dropPosition === 'inside' ? 'before' : dragState.dropPosition) ?? 'before')
