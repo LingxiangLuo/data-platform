@@ -208,35 +208,3 @@ def build_datax_job(
         }
     }
 
-
-def build_for_sync_task(task, source_ds: DataSource, target_ds: DataSource, mask_password: bool = True) -> Dict[str, Any]:
-    """便捷封装：直接基于 SyncTask 模型生成 DataX 配置"""
-    import json
-
-    def _load(s):
-        if not s:
-            return None
-        try:
-            return json.loads(s) if isinstance(s, str) else s
-        except Exception:
-            return None
-
-    fm = _load(task.field_mapping)
-    if not fm:
-        raise ValueError("任务未配置字段映射")
-    return build_datax_job(
-        source_ds=source_ds,
-        source_table=task.source_table,
-        target_ds=target_ds,
-        target_table=task.target_table,
-        field_mapping=fm,
-        sync_type=task.sync_type or "full",
-        increment_column=task.increment_column,
-        where_clause=task.where_clause,
-        split_pk=task.split_pk,
-        write_mode=task.write_mode or "insert",
-        channel=task.channel or 3,
-        pre_sql=_load(task.pre_sql),
-        post_sql=_load(task.post_sql),
-        mask_password=mask_password,
-    )

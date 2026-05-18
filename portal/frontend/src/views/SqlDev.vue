@@ -104,12 +104,7 @@
                 @drop.prevent="onDrop($event, node)"
               >
                 <LangIcon :type="node.data.type" :size="18" />
-                <span v-if="renamingCompId !== node.id" class="node-name">
-                  <template v-if="node.data.type === 'datax' && node.data.config_json?.source_table">
-                    {{ node.data.config_json.source_table }} → {{ node.data.config_json.target_table }}
-                  </template>
-                  <template v-else>{{ node.name }}</template>
-                </span>
+                <span v-if="renamingCompId !== node.id" class="node-name">{{ node.name }}</span>
                 <a-input
                   v-else
                   v-model="renameCompValue"
@@ -168,18 +163,18 @@
               <a-doption @click="newBlankTab('sql')">新建 SQL</a-doption>
               <a-doption @click="newBlankTab('python')">新建 Python</a-doption>
               <a-doption @click="newBlankTab('shell')">新建 Shell</a-doption>
-              <a-doption @click="wizardVisible = true">新建 DataX 同步</a-doption>
+              <a-doption @click="newBlankTab('datax')">新建 DataX 同步</a-doption>
             </template>
           </a-dropdown>
         </div>
 
-        <!-- DataX 同步任务面板（当前 tab 是 datax 类型时显示） -->
+        <!-- DataX 编辑器 -->
         <template v-if="activeTab && activeTab.language === 'datax'">
-          <SyncTaskCanvas
+          <DataXEditor
             :comp-id="activeTab.componentId ?? null"
-            @saved="onSyncTaskSaved"
-            @status-changed="onSyncStatusChanged"
-            style="flex: 1; overflow: auto;"
+            @saved="onDataXSaved"
+            @status-changed="loadComponents"
+            style="flex: 1; overflow: hidden;"
           />
         </template>
 
@@ -291,11 +286,6 @@
       @select="onMenuSelect"
     />
 
-    <!-- DataX 同步任务向导 -->
-    <SyncTaskWizard
-      v-model:visible="wizardVisible"
-      @saved="loadComponents"
-    />
   </div>
 </template>
 
@@ -318,8 +308,7 @@ import {
   moveComponent, reorderComponents, moveComponentFolder,
   getProjects,
 } from '../api'
-import SyncTaskCanvas from '../components/SyncTaskCanvas.vue'
-import SyncTaskWizard from '../components/SyncTaskWizard.vue'
+import DataXEditor from '../components/DataXEditor.vue'
 import { useUserStore } from '../stores/user'
 import type { ComponentItem, DatasourceItem, FolderItem, ProjectItem, ComponentStatus } from '../types/component'
 import { statusLabel, statusColor, manualStatusOptions } from '../types/component'
@@ -364,9 +353,6 @@ const editorRef = ref<any>(null)
 const running = ref(false)
 const saving = ref(false)
 const result = ref<any>(null)
-
-// DataX 同步任务向导
-const wizardVisible = ref(false)
 
 const saveModalVisible = ref(false)
 const saveName = ref('')
@@ -493,32 +479,11 @@ function isTabActive(compId: number) {
 }
 
 function openComp(c: ComponentItem) {
-  if (c.type === 'datax') {
-    const existing = tabs.value.find(t => t.componentId === c.id)
-    if (existing) { switchTab(existing.key); return }
-    const key = genKey()
-    const cfg = c.config_json || {}
-    const src = cfg.source_table || ''
-    const dst = cfg.target_table || ''
-    const tabName = src && dst ? `${src} → ${dst}` : c.name
-    tabs.value.push({
-      key,
-      name: tabName,
-      code: '',
-      language: 'datax',
-      componentId: c.id,
-      folderId: c.folder_id ?? null,
-      dirty: false,
-    })
-    switchTab(key)
-    return
-  }
   const existing = tabs.value.find(t => t.componentId === c.id)
   if (existing) { switchTab(existing.key); return }
   const key = genKey()
-  // code is stored in config_json.sql or config_json.script
   const cfg = c.config_json || {}
-  const code = cfg.sql || cfg.script || c.code || ''
+  const code = cfg.sql || cfg.script || cfg.rawJson || c.code || ''
   tabs.value.push({
     key,
     name: c.name,
@@ -538,9 +503,8 @@ function openComp(c: ComponentItem) {
 }
 
 function newBlankTab(lang: Language = 'sql', folderId?: number | null) {
-  if (lang === 'datax') { wizardVisible.value = true; return }
   const key = genKey()
-  const names: Record<string, string> = { sql: 'Untitled SQL', python: 'Untitled Python', shell: 'Untitled Shell' }
+  const names: Record<string, string> = { sql: 'Untitled SQL', python: 'Untitled Python', shell: 'Untitled Shell', datax: 'Untitled DataX' }
   tabs.value.push({ key, name: names[lang] ?? 'Untitled', code: '', language: lang, folderId: folderId ?? null, dirty: false })
   switchTab(key)
 }
@@ -714,27 +678,17 @@ async function confirmSave() {
   pendingSaveTab.value = null
 }
 
-async function onSyncTaskSaved(comp: any) {
+async function onDataXSaved(comp: any) {
   await loadComponents()
-  // 更新当前 datax tab 的状态
   const tab = activeTab.value
   if (tab && tab.language === 'datax') {
     tab.componentId = comp.id
-    const cfg = comp.config_json || {}
-    const src = cfg.source_table || ''
-    const dst = cfg.target_table || ''
-    tab.name = src && dst ? `${src} → ${dst}` : comp.name
+    tab.name = comp.name
     tab.dirty = false
   }
 }
 
-async function onSyncStatusChanged(_comp: any) {
-  await loadComponents()
-}
-
 async function doSave(tab: Tab) {
-  // datax 组件由 SyncTaskCanvas/SyncTaskWizard 独立管理，不走通用保存逻辑
-  if (tab.language === 'datax') return
   saving.value = true
   try {
     // 构造 config_json
@@ -821,15 +775,10 @@ function buildCompMenuItems(node: TreeNode): MenuItem[] {
   const t = c.type as string
   const items: MenuItem[] = []
 
-  if (t === 'datax') {
-    items.push({ key: 'open', label: '打开' })
-    items.push({ divider: true })
-    items.push({ key: 'delete', label: '删除', danger: true })
-    return items
-  }
-
   items.push({ key: 'open', label: '打开' })
-  items.push({ key: 'run', label: '运行' })
+  if (t !== 'datax') {
+    items.push({ key: 'run', label: '运行' })
+  }
   items.push({ divider: true })
   items.push({ key: `new-${t}`, label: `新建${typeLabel(t)}` })
   items.push({ key: 'copy', label: '复制' })
@@ -955,12 +904,8 @@ async function onMenuSelect(key: string) {
     if (targetNode.kind === 'component') await doMoveComponent(targetNode.data.id, folderId)
   } else if (key.startsWith('new-')) {
     const lang = key.replace('new-', '') as Language
-    if (lang === 'datax') {
-      wizardVisible.value = true
-    } else {
-      const folderId = targetNode.kind === 'folder' ? targetNode.id : targetNode.data.folder_id ?? null
-      newBlankTab(lang, folderId)
-    }
+    const folderId = targetNode.kind === 'folder' ? targetNode.id : targetNode.data.folder_id ?? null
+    newBlankTab(lang, folderId)
   }
 }
 

@@ -149,14 +149,6 @@ def _serialize(c: Component) -> dict:
         "created_at": str(c.created_at) if c.created_at else None,
         "updated_at": str(c.updated_at) if c.updated_at else None,
     }
-    # datax 类型：把 config_json 中的业务字段扁平化到顶层，前端可直接使用
-    if c.type == "datax":
-        for key in ("source_id", "target_id", "source_table", "target_table",
-                    "sync_type", "increment_column", "field_mapping",
-                    "where_clause", "split_pk", "write_mode", "channel",
-                    "pre_sql", "post_sql", "sync_task_id", "rawJson"):
-            if key in cfg:
-                s[key] = cfg[key]
     return s
 
 
@@ -291,57 +283,6 @@ def create_component(
         created_by=current_user.id,
     )
     db.add(c)
-    db.flush()
-
-    # datax 类型：自动同步 SyncTask
-    if req.type == "datax":
-        from app.models.sync_task import SyncTask
-        import json
-        sync_task_id = cfg.get("sync_task_id")
-        task = None
-        if sync_task_id:
-            task = db.query(SyncTask).filter(SyncTask.id == sync_task_id).first()
-        if task:
-            task.component_id = c.id
-            task.name = req.name
-            task.source_id = cfg.get("source_id")
-            task.target_id = cfg.get("target_id")
-            task.source_table = cfg.get("source_table", "")
-            task.target_table = cfg.get("target_table", "")
-            task.sync_type = cfg.get("sync_type", "full")
-            task.increment_column = cfg.get("increment_column")
-            task.field_mapping = json.dumps(cfg.get("field_mapping", []), ensure_ascii=False) if cfg.get("field_mapping") else None
-            task.where_clause = cfg.get("where_clause")
-            task.split_pk = cfg.get("split_pk")
-            task.write_mode = cfg.get("write_mode", "insert")
-            task.channel = cfg.get("channel", 3)
-            task.pre_sql = json.dumps(cfg.get("pre_sql"), ensure_ascii=False) if cfg.get("pre_sql") else None
-            task.post_sql = json.dumps(cfg.get("post_sql"), ensure_ascii=False) if cfg.get("post_sql") else None
-        else:
-            task = SyncTask(
-                name=req.name,
-                component_id=c.id,
-                source_id=cfg.get("source_id"),
-                target_id=cfg.get("target_id"),
-                source_table=cfg.get("source_table", ""),
-                target_table=cfg.get("target_table", ""),
-                sync_type=cfg.get("sync_type", "full"),
-                increment_column=cfg.get("increment_column"),
-                field_mapping=json.dumps(cfg.get("field_mapping", []), ensure_ascii=False) if cfg.get("field_mapping") else None,
-                where_clause=cfg.get("where_clause"),
-                split_pk=cfg.get("split_pk"),
-                write_mode=cfg.get("write_mode", "insert"),
-                channel=cfg.get("channel", 3),
-                pre_sql=json.dumps(cfg.get("pre_sql"), ensure_ascii=False) if cfg.get("pre_sql") else None,
-                post_sql=json.dumps(cfg.get("post_sql"), ensure_ascii=False) if cfg.get("post_sql") else None,
-                status="draft",
-                created_by=current_user.id,
-            )
-            db.add(task)
-            db.flush()
-            cfg["sync_task_id"] = task.id
-            c.config_json = cfg
-
     db.commit()
     db.refresh(c)
     return _serialize(c)
@@ -439,6 +380,22 @@ def delete_folder(
     return {"ok": True}
 
 
+class DataXPreviewRequest(BaseModel):
+    source_id: int
+    target_id: int
+    source_table: str
+    target_table: str
+    sync_type: str = "full"
+    increment_column: Optional[str] = None
+    field_mapping: list = []
+    where_clause: Optional[str] = None
+    split_pk: Optional[str] = None
+    write_mode: Optional[str] = "insert"
+    channel: Optional[int] = 3
+    pre_sql: Optional[list] = None
+    post_sql: Optional[list] = None
+
+
 # ===== 临时 SQL 执行（无需保存为组件）=====
 @router.post("/run-sql")
 def run_sql_adhoc(
@@ -454,6 +411,41 @@ def run_sql_adhoc(
     if not check_resource_permission(db, current_user, "datasource", req.datasource_id, "read"):
         raise HTTPException(404, "数据源不存在")
     return _run_sql(db, req.datasource_id, req.sql)
+
+
+@router.post("/preview-datax")
+def preview_datax_unsaved(
+    req: DataXPreviewRequest,
+    db: Session = Depends(get_db),
+    current_user: SysUser = Depends(get_current_user),
+):
+    """基于未保存的 datax 配置生成 DataX job.json（密码已打码）"""
+    from app.models.datasource import DataSource
+    from app.core.datax_builder import build_datax_job
+    src = db.query(DataSource).filter(DataSource.id == req.source_id).first()
+    dst = db.query(DataSource).filter(DataSource.id == req.target_id).first()
+    if not src or not dst:
+        raise HTTPException(status_code=400, detail="数据源不存在")
+    try:
+        job = build_datax_job(
+            source_ds=src,
+            source_table=req.source_table,
+            target_ds=dst,
+            target_table=req.target_table,
+            field_mapping=req.field_mapping,
+            sync_type=req.sync_type,
+            increment_column=req.increment_column,
+            where_clause=req.where_clause,
+            split_pk=req.split_pk,
+            write_mode=req.write_mode or "insert",
+            channel=req.channel or 3,
+            pre_sql=req.pre_sql,
+            post_sql=req.post_sql,
+            mask_password=True,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"datax": job}
 
 
 @router.get("/{comp_id}")
@@ -504,31 +496,6 @@ def update_component(
     if "config_json" in updates:
         c.status = STATUS_DRAFT
         c.version = (c.version or 1) + 1
-    # datax 类型：自动同步关联的 SyncTask
-    if c.type == "datax" and "config_json" in updates:
-        from app.models.sync_task import SyncTask
-        import json
-        cfg = c.config_json or {}
-        task = db.query(SyncTask).filter(SyncTask.component_id == comp_id).first()
-        if not task:
-            sync_task_id = cfg.get("sync_task_id")
-            if sync_task_id:
-                task = db.query(SyncTask).filter(SyncTask.id == sync_task_id).first()
-        if task:
-            task.name = c.name
-            task.source_id = cfg.get("source_id")
-            task.target_id = cfg.get("target_id")
-            task.source_table = cfg.get("source_table", "")
-            task.target_table = cfg.get("target_table", "")
-            task.sync_type = cfg.get("sync_type", "full")
-            task.increment_column = cfg.get("increment_column")
-            task.field_mapping = json.dumps(cfg.get("field_mapping", []), ensure_ascii=False) if cfg.get("field_mapping") else None
-            task.where_clause = cfg.get("where_clause")
-            task.split_pk = cfg.get("split_pk")
-            task.write_mode = cfg.get("write_mode", "insert")
-            task.channel = cfg.get("channel", 3)
-            task.pre_sql = json.dumps(cfg.get("pre_sql"), ensure_ascii=False) if cfg.get("pre_sql") else None
-            task.post_sql = json.dumps(cfg.get("post_sql"), ensure_ascii=False) if cfg.get("post_sql") else None
     db.commit()
     db.refresh(c)
     return _serialize(c)
@@ -547,25 +514,6 @@ def delete_component(
             detail=f"组件状态 {c.status},只有 draft/offline 状态允许删除;请先下线",
         )
     _check_workflow_refs(db, comp_id)
-
-    # datax 类型：级联删除关联的 SyncTask 和 Workflow
-    if c.type == "datax":
-        from app.models.sync_task import SyncTask
-        from app.models.workflow import Workflow
-
-        task = db.query(SyncTask).filter(SyncTask.component_id == comp_id).first()
-        if not task:
-            sync_task_id = (c.config_json or {}).get("sync_task_id")
-            if sync_task_id:
-                task = db.query(SyncTask).filter(SyncTask.id == sync_task_id).first()
-        wfs = db.query(Workflow).filter(
-            Workflow.steps_json.contains(f'"component_id": {comp_id}'),
-        ).all()
-        for wf in wfs:
-            db.delete(wf)
-        if task:
-            db.delete(task)
-
     db.delete(c)
     db.commit()
     return {"message": "删除成功"}
@@ -762,20 +710,12 @@ async def publish_component_as_workflow(
     db.refresh(c)
 
     from app.models.workflow import Workflow
-    from app.models.sync_task import SyncTask
     from app.models.resource_access import SysResourceAccess
 
-    # 查找已有 Workflow（通过 SyncTask.ds_workflow_id 或 steps_json 引用）
-    sync_task_id = cfg.get("sync_task_id")
-    wf = None
-    if sync_task_id:
-        task = db.query(SyncTask).filter(SyncTask.id == sync_task_id).first()
-        if task and task.ds_workflow_id:
-            wf = db.query(Workflow).filter(Workflow.id == task.ds_workflow_id).first()
-    if not wf:
-        wf = db.query(Workflow).filter(
-            Workflow.steps_json.contains(f'"component_id": {c.id}'),
-        ).first()
+    # 查找已有 Workflow（通过 steps_json 引用 component_id）
+    wf = db.query(Workflow).filter(
+        Workflow.steps_json.contains(f'"component_id": {c.id}'),
+    ).first()
 
     if wf:
         wf.steps_json = [{"component_id": c.id, "name": c.name}]
@@ -805,12 +745,6 @@ async def publish_component_as_workflow(
         ))
 
     db.flush()
-
-    # 更新 SyncTask 的 ds_workflow_id
-    if sync_task_id:
-        task = db.query(SyncTask).filter(SyncTask.id == sync_task_id).first()
-        if task:
-            task.ds_workflow_id = wf.id
 
     from app.api.workflow import _sync_to_ds
     pd_code = None

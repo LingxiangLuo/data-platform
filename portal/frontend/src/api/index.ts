@@ -55,7 +55,9 @@ export const updateSyncTask = (id: number, data: any) => api.put(`/sync-tasks/${
 export const deleteSyncTask = (id: number) => api.delete(`/sync-tasks/${id}`)
 export const setSyncTaskStatus = (id: number, status: string) => api.patch(`/sync-tasks/${id}/status`, null, { params: { status } })
 export const previewSyncTaskDataX = (id: number) => api.get(`/sync-tasks/${id}/preview-datax`)
-export const previewSyncTaskUnsaved = (data: any) => api.post('/sync-tasks/preview', data)
+export const previewDataXConfig = (data: any) => api.post('/components/preview-datax', data)
+// 兼容别名
+export const previewSyncTaskUnsaved = previewDataXConfig
 export const testSyncTaskConnection = (data: { datasource_id: number; table?: string }) =>
   api.post('/sync-tasks/test-connection', data)
 export const runSyncTask = (_id: number) => Promise.reject(new Error('已废弃：请通过工作流运行数据同步任务'))
